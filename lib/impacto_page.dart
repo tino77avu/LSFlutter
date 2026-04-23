@@ -14,7 +14,6 @@ class ImpactoPage extends StatefulWidget {
 
 class _ImpactoPageState extends State<ImpactoPage> {
   static const Color _brand = AppTopBar.brandGreen;
-  static const Color _blueInst = Color(0xFF1E5A8A);
   bool _loading = true;
   String? _error;
   ImpactData _data = const ImpactData(
@@ -580,48 +579,41 @@ class _ImpactoPageState extends State<ImpactoPage> {
         LayoutBuilder(
           builder: (context, c) {
             final narrow = c.maxWidth < 520;
-            final tiles = <_ImpactMetricTile>[
-              _ImpactMetricTile(
-                iconBackground: const Color(0xFFE3F2FD),
-                iconBorder: const Color(0xFFBBDEFB),
-                iconChild: Icon(
-                  Icons.school_outlined,
-                  color: _blueInst,
-                  size: 24,
-                ),
+            final cards = [
+              _InstitutionalMetricRow(
+                icon: Icons.school_outlined,
                 value: '${data.institutionalTotal}',
                 label: 'Libros para instituciones',
               ),
-              _ImpactMetricTile(
-                iconBackground: const Color(0xFFE8F5E9),
-                iconBorder: const Color(0xFFA5D6A7),
-                iconChild: Icon(Icons.check_rounded, color: _brand, size: 26),
+              _InstitutionalMetricRow(
+                icon: Icons.check_rounded,
                 value: '${data.institutionalDonated}',
                 label: 'Donados a instituciones',
               ),
-              _ImpactMetricTile(
-                iconBackground: const Color(0xFFE8F5EC),
-                iconBorder: const Color(0xFFC8E6C9),
-                iconChild: Icon(
-                  Icons.menu_book_outlined,
-                  color: const Color(0xFF1B5E20),
-                  size: 24,
-                ),
+              _InstitutionalMetricRow(
+                icon: Icons.menu_book_outlined,
                 value: '${data.institutionalAvailable}',
                 label: 'Disponibles ahora',
               ),
             ];
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: tiles.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: narrow ? 1 : 3,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: narrow ? 1.0 : 1.0,
-              ),
-              itemBuilder: (context, i) => tiles[i],
+            if (narrow) {
+              return Column(
+                children: [
+                  for (var i = 0; i < cards.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 10),
+                    cards[i],
+                  ],
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < cards.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 12),
+                  Expanded(child: cards[i]),
+                ],
+              ],
             );
           },
         ),
@@ -942,7 +934,75 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
-/// Tarjeta cuadrada unificada (impacto personal e institucional): mismo borde y tipografía que categorías.
+/// Fila de métrica institucional: mismo patrón visual que [_CategoryCard] (fondo tintado, borde, fila).
+class _InstitutionalMetricRow extends StatelessWidget {
+  const _InstitutionalMetricRow({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+
+  static const Color _bg = Color(0xFFE8F5E9);
+  static const Color _border = Color(0xFFC8E6C9);
+  static const Color _iconColor = Color(0xFF2E7D32);
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: _bg,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 0,
+      child: InkWell(
+        onTap: () {},
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _border),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, size: 26, color: _iconColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      value,
+                      style: const TextStyle(
+                        fontFamily: 'Georgia',
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1B5E20),
+                      ),
+                    ),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.black.withValues(alpha: 0.45),
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tarjeta cuadrada para «Tu impacto personal» (grilla con aspect ratio fijo).
 class _ImpactMetricTile extends StatelessWidget {
   const _ImpactMetricTile({
     required this.iconBackground,
