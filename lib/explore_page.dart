@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'books_service.dart';
+import 'explore_book_detail_page.dart';
 
 /// Listado de libros con búsqueda y filtros (pestaña Explorar).
 class ExplorePage extends StatefulWidget {
@@ -454,6 +455,52 @@ class _BookCard extends StatelessWidget {
                         const SizedBox(width: 6),
                         _roundIconBtn(Icons.inventory_2_outlined),
                       ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: 10,
+                    child: Material(
+                      color: Colors.white.withValues(alpha: 0.94),
+                      elevation: 1,
+                      shadowColor: Colors.black26,
+                      borderRadius: BorderRadius.circular(20),
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  ExploreBookDetailPage(bookId: libro.id),
+                            ),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.visibility_outlined,
+                                size: 16,
+                                color: Color(0xFF444444),
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'Ver',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF444444),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],

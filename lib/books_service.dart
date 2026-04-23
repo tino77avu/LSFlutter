@@ -35,6 +35,39 @@ class BookListItem {
   final String? imageUrl;
 }
 
+/// Libro completo para la pantalla de detalle (Explorar → Ver).
+class BookDetail {
+  const BookDetail({
+    required this.id,
+    required this.userId,
+    required this.title,
+    required this.author,
+    required this.category,
+    required this.condition,
+    required this.city,
+    required this.status,
+    required this.recipientType,
+    this.imageUrl,
+    this.description,
+    this.createdAt,
+    required this.ownerDisplayName,
+  });
+
+  final int id;
+  final String userId;
+  final String title;
+  final String author;
+  final String category;
+  final String condition;
+  final String city;
+  final String status;
+  final String recipientType;
+  final String? imageUrl;
+  final String? description;
+  final DateTime? createdAt;
+  final String ownerDisplayName;
+}
+
 class FavoriteBookItem {
   const FavoriteBookItem({
     required this.bookId,
@@ -478,6 +511,68 @@ class BooksService {
           imageUrl: imageValue.isEmpty ? null : imageValue,
         );
       }).toList();
+    } on PostgrestException catch (e) {
+      throw Exception(e.message);
+    }
+  }
+
+  /// Un libro por id + nombre visible del publicador (`profiles`).
+  Future<BookDetail?> loadBookDetail(int bookId) async {
+    try {
+      final bookRow = await _client
+          .from('books')
+          .select(
+            'id,user_id,title,author,category,condition,city,status,image_url,created_at,description,recipient_type',
+          )
+          .eq('id', bookId)
+          .maybeSingle();
+
+      if (bookRow == null) return null;
+
+      final m = Map<String, dynamic>.from(bookRow as Map);
+      final uid = _cellToString(m['user_id']).trim();
+      var ownerName = 'Miembro de la comunidad';
+      if (uid.isNotEmpty) {
+        try {
+          final prof = await _client
+              .from('profiles')
+              .select('full_name')
+              .eq('id', uid)
+              .maybeSingle();
+          if (prof != null) {
+            final pm = Map<String, dynamic>.from(prof as Map);
+            final pn = _cellToString(pm['full_name']).trim();
+            if (pn.isNotEmpty) ownerName = pn;
+          }
+        } on PostgrestException {
+          // Sin perfil o sin permiso: se mantiene el nombre por defecto.
+        }
+      }
+
+      final idRaw = m['id'];
+      final id = idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0;
+      final imageValue = _cellToString(m['image_url']).trim();
+      final createdRaw = _cellToString(m['created_at']).trim();
+      final createdAt = createdRaw.isEmpty
+          ? null
+          : DateTime.tryParse(createdRaw)?.toLocal();
+      final desc = _cellToString(m['description']).trim();
+
+      return BookDetail(
+        id: id,
+        userId: uid,
+        title: _cellToString(m['title']).trim(),
+        author: _cellToString(m['author']).trim(),
+        category: _cellToString(m['category']).trim(),
+        condition: _cellToString(m['condition']).trim(),
+        city: _cellToString(m['city']).trim(),
+        status: _cellToString(m['status']).trim(),
+        recipientType: _cellToString(m['recipient_type']).trim(),
+        imageUrl: imageValue.isEmpty ? null : imageValue,
+        description: desc.isEmpty ? null : desc,
+        createdAt: createdAt,
+        ownerDisplayName: ownerName,
+      );
     } on PostgrestException catch (e) {
       throw Exception(e.message);
     }
