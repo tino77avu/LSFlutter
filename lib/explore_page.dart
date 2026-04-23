@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'books_service.dart';
 
 /// Listado de libros con búsqueda y filtros (pestaña Explorar).
 class ExplorePage extends StatefulWidget {
@@ -11,8 +14,12 @@ class ExplorePage extends StatefulWidget {
 }
 
 class _ExplorePageState extends State<ExplorePage> {
-  static const int _totalLibros = 17;
   int _categoriaIndex = 0;
+  final TextEditingController _searchController = TextEditingController();
+  bool _loading = true;
+  String? _error;
+  List<BookListItem> _allBooks = [];
+  Set<int> _favoriteBookIds = <int>{};
 
   static const List<_CategoriaChip> _categorias = [
     _CategoriaChip('Todos', Icons.grid_view_rounded),
@@ -28,52 +35,143 @@ class _ExplorePageState extends State<ExplorePage> {
     _CategoriaChip('Otro', Icons.label_outline),
   ];
 
-  static const List<_LibroDemo> _libros = [
-    _LibroDemo(
-      titulo: 'El nombre del viento',
-      autor: 'Patrick Rothfuss',
-      categoria: 'LITERATURA',
-      condicion: 'Usado · Aceptable',
-      ubicacion: 'Surco - Lima',
-      esMio: true,
-      gradiente: [Color(0xFF1B3D2F), Color(0xFF2D5A45)],
-    ),
-    _LibroDemo(
-      titulo: 'Breve historia del tiempo',
-      autor: 'Stephen Hawking',
-      categoria: 'CIENCIA',
-      condicion: 'Como nuevo',
-      ubicacion: 'Miraflores - Lima',
-      esMio: false,
-      gradiente: [Color(0xFF1A2F4A), Color(0xFF2D4A6A)],
-    ),
-    _LibroDemo(
-      titulo: 'It',
-      autor: 'Stephen King',
-      categoria: 'TERROR',
-      condicion: 'Usado · Buen estado',
-      ubicacion: 'San Isidro - Lima',
-      esMio: false,
-      gradiente: [Color(0xFF3D1515), Color(0xFF5C2020)],
-    ),
-    _LibroDemo(
-      titulo: 'Sapiens',
-      autor: 'Yuval Noah Harari',
-      categoria: 'HISTORIA',
-      condicion: 'Como nuevo',
-      ubicacion: 'La Molina - Lima',
-      esMio: false,
-      gradiente: [Color(0xFF4A3A1A), Color(0xFF6B5428)],
-    ),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadBooks();
+    _searchController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadBooks() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final books = await BooksService.instance.loadExploreBooks();
+      final favoriteIds = await BooksService.instance.loadFavoriteBookIds();
+      if (!mounted) return;
+      setState(() {
+        _allBooks = books;
+        _favoriteBookIds = favoriteIds;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _toggleFavorite(BookListItem book) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Inicia sesión para guardar favoritos.')),
+      );
+      return;
+    }
+    final currentlyFav = _favoriteBookIds.contains(book.id);
+    final nextFav = !currentlyFav;
+
+    setState(() {
+      if (nextFav) {
+        _favoriteBookIds.add(book.id);
+      } else {
+        _favoriteBookIds.remove(book.id);
+      }
+    });
+
+    try {
+      await BooksService.instance.toggleFavorite(
+        bookId: book.id,
+        shouldFavorite: nextFav,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (currentlyFav) {
+          _favoriteBookIds.add(book.id);
+        } else {
+          _favoriteBookIds.remove(book.id);
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No se pudo actualizar favoritos: ${e.toString().replaceFirst('Exception: ', '')}',
+          ),
+        ),
+      );
+    }
+  }
+
+  List<BookListItem> get _filteredBooks {
+    final query = _searchController.text.trim().toLowerCase();
+    var list = _allBooks;
+
+    if (_categoriaIndex > 0) {
+      final selectedCategoryName = _categorias[_categoriaIndex].nombre;
+      list = list
+          .where(
+            (b) => _matchesSelectedCategory(selectedCategoryName, b.category),
+          )
+          .toList();
+    }
+
+    if (query.isNotEmpty) {
+      list = list.where((b) {
+        return b.title.toLowerCase().contains(query) ||
+            b.author.toLowerCase().contains(query) ||
+            b.category.toLowerCase().contains(query) ||
+            b.city.toLowerCase().contains(query);
+      }).toList();
+    }
+    return list;
+  }
+
+  bool _matchesSelectedCategory(
+    String selectedCategoryName,
+    String bookCategory,
+  ) {
+    final selected = _normalizeCategoryText(selectedCategoryName);
+    final category = _normalizeCategoryText(bookCategory);
+    return category == selected ||
+        category.contains(selected) ||
+        selected.contains(category);
+  }
+
+  String _normalizeCategoryText(String value) {
+    return value
+        .toLowerCase()
+        .trim()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        final crossCount = w >= 1100 ? 4 : w >= 700 ? 2 : 1;
+        final crossCount = w >= 1100
+            ? 4
+            : w >= 700
+            ? 2
+            : 1;
 
+        final filteredBooks = _filteredBooks;
         return CustomScrollView(
           slivers: [
             SliverPadding(
@@ -93,7 +191,7 @@ class _ExplorePageState extends State<ExplorePage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '$_totalLibros libros disponibles en la comunidad',
+                      '${filteredBooks.length} libros disponibles en la comunidad',
                       style: TextStyle(
                         fontSize: 15,
                         color: Colors.black.withValues(alpha: 0.55),
@@ -101,12 +199,19 @@ class _ExplorePageState extends State<ExplorePage> {
                     ),
                     const SizedBox(height: 24),
                     TextField(
+                      controller: _searchController,
                       decoration: InputDecoration(
                         hintText: 'Busca por título, autor o palabra clave...',
-                        prefixIcon: const Icon(Icons.search, color: Color(0xFF6B6B6B)),
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          color: Color(0xFF6B6B6B),
+                        ),
                         suffixIcon: IconButton(
                           onPressed: () {},
-                          icon: const Icon(Icons.tune, color: Color(0xFF6B6B6B)),
+                          icon: const Icon(
+                            Icons.tune,
+                            color: Color(0xFF6B6B6B),
+                          ),
                         ),
                         filled: true,
                         fillColor: const Color(0xFFF3F3F3),
@@ -114,7 +219,9 @@ class _ExplorePageState extends State<ExplorePage> {
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide.none,
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 14,
+                        ),
                       ),
                     ),
                   ],
@@ -138,7 +245,11 @@ class _ExplorePageState extends State<ExplorePage> {
                       label: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(c.icon, size: 18, color: sel ? Colors.white : const Color(0xFF444444)),
+                          Icon(
+                            c.icon,
+                            size: 18,
+                            color: sel ? Colors.white : const Color(0xFF444444),
+                          ),
                           const SizedBox(width: 6),
                           Text(c.nombre),
                         ],
@@ -149,7 +260,11 @@ class _ExplorePageState extends State<ExplorePage> {
                         fontWeight: FontWeight.w500,
                       ),
                       backgroundColor: const Color(0xFFF0F0F0),
-                      side: BorderSide(color: sel ? ExplorePage.brandGreen : const Color(0xFFE0E0E0)),
+                      side: BorderSide(
+                        color: sel
+                            ? ExplorePage.brandGreen
+                            : const Color(0xFFE0E0E0),
+                      ),
                       onSelected: (_) => setState(() => _categoriaIndex = i),
                     );
                   },
@@ -157,21 +272,71 @@ class _ExplorePageState extends State<ExplorePage> {
               ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 20)),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-              sliver: SliverGrid(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossCount,
-                  mainAxisSpacing: 20,
-                  crossAxisSpacing: 20,
-                  childAspectRatio: 0.62,
+            if (_loading)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_error != null)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.error_outline,
+                          size: 34,
+                          color: Colors.redAccent,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'No se pudieron cargar los libros.\n$_error',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 10),
+                        FilledButton(
+                          onPressed: _loadBooks,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: ExplorePage.brandGreen,
+                          ),
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _BookCard(libro: _libros[index]),
-                  childCount: _libros.length,
+              )
+            else if (filteredBooks.isEmpty)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: Text('No hay libros para mostrar.')),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: crossCount,
+                    mainAxisSpacing: 20,
+                    crossAxisSpacing: 20,
+                    childAspectRatio: 0.62,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => _BookCard(
+                      libro: filteredBooks[index],
+                      isFavorite: _favoriteBookIds.contains(
+                        filteredBooks[index].id,
+                      ),
+                      onToggleFavorite: () =>
+                          _toggleFavorite(filteredBooks[index]),
+                    ),
+                    childCount: filteredBooks.length,
+                  ),
                 ),
               ),
-            ),
           ],
         );
       },
@@ -185,30 +350,26 @@ class _CategoriaChip {
   final IconData icon;
 }
 
-class _LibroDemo {
-  const _LibroDemo({
-    required this.titulo,
-    required this.autor,
-    required this.categoria,
-    required this.condicion,
-    required this.ubicacion,
-    required this.esMio,
-    required this.gradiente,
+class _BookCard extends StatelessWidget {
+  const _BookCard({
+    required this.libro,
+    required this.isFavorite,
+    required this.onToggleFavorite,
   });
 
-  final String titulo;
-  final String autor;
-  final String categoria;
-  final String condicion;
-  final String ubicacion;
-  final bool esMio;
-  final List<Color> gradiente;
-}
+  final BookListItem libro;
+  final bool isFavorite;
+  final VoidCallback onToggleFavorite;
+  static const List<Color> _defaultGradient = [
+    Color(0xFF1B3D2F),
+    Color(0xFF2D5A45),
+  ];
 
-class _BookCard extends StatelessWidget {
-  const _BookCard({required this.libro});
-
-  final _LibroDemo libro;
+  bool get _isMine {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return false;
+    return libro.userId == userId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -222,27 +383,33 @@ class _BookCard extends StatelessWidget {
         children: [
           Expanded(
             child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(16),
+              ),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: libro.gradiente,
-                      ),
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.auto_stories, size: 56, color: Colors.white24),
-                    ),
-                  ),
+                  if (libro.imageUrl != null && libro.imageUrl!.isNotEmpty)
+                    Image.network(
+                      libro.imageUrl!,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return _bookPlaceholder(_defaultGradient);
+                      },
+                      errorBuilder: (context, error, stackTrace) =>
+                          _bookPlaceholder(_defaultGradient),
+                    )
+                  else
+                    _bookPlaceholder(_defaultGradient),
                   Positioned(
                     top: 10,
                     left: 10,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.92),
                         borderRadius: BorderRadius.circular(20),
@@ -253,15 +420,19 @@ class _BookCard extends StatelessWidget {
                           Icon(
                             Icons.circle,
                             size: 8,
-                            color: libro.esMio ? ExplorePage.brandGreen : const Color(0xFF2E7D32),
+                            color: _isMine
+                                ? ExplorePage.brandGreen
+                                : const Color(0xFF2E7D32),
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            libro.esMio ? 'Mi libro' : 'Disponible',
+                            _isMine ? 'Mi libro' : 'Disponible',
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: libro.esMio ? ExplorePage.brandGreen : const Color(0xFF2E7D32),
+                              color: _isMine
+                                  ? ExplorePage.brandGreen
+                                  : const Color(0xFF2E7D32),
                             ),
                           ),
                         ],
@@ -273,7 +444,13 @@ class _BookCard extends StatelessWidget {
                     right: 8,
                     child: Row(
                       children: [
-                        _roundIconBtn(Icons.favorite_border),
+                        _roundIconBtn(
+                          isFavorite ? Icons.favorite : Icons.favorite_border,
+                          iconColor: isFavorite
+                              ? const Color(0xFFD32F2F)
+                              : const Color(0xFF444444),
+                          onTap: onToggleFavorite,
+                        ),
                         const SizedBox(width: 6),
                         _roundIconBtn(Icons.inventory_2_outlined),
                       ],
@@ -292,7 +469,7 @@ class _BookCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        libro.categoria,
+                        libro.category.toUpperCase(),
                         style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -302,34 +479,51 @@ class _BookCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      libro.condicion,
-                      style: TextStyle(fontSize: 11, color: Colors.black.withValues(alpha: 0.45)),
+                      libro.condition,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.black.withValues(alpha: 0.45),
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  libro.titulo,
+                  libro.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, height: 1.2),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  libro.autor,
+                  libro.author,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.5)),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.black.withValues(alpha: 0.5),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Icon(Icons.place_outlined, size: 16, color: Colors.black.withValues(alpha: 0.45)),
+                    Icon(
+                      Icons.place_outlined,
+                      size: 16,
+                      color: Colors.black.withValues(alpha: 0.45),
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        libro.ubicacion,
-                        style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.5)),
+                        libro.city,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withValues(alpha: 0.5),
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -343,17 +537,36 @@ class _BookCard extends StatelessWidget {
     );
   }
 
-  Widget _roundIconBtn(IconData icon) {
+  Widget _roundIconBtn(
+    IconData icon, {
+    VoidCallback? onTap,
+    Color iconColor = const Color(0xFF444444),
+  }) {
     return Material(
       color: Colors.white.withValues(alpha: 0.95),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: () {},
+        onTap: onTap ?? () {},
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 18, color: const Color(0xFF444444)),
+          child: Icon(icon, size: 18, color: iconColor),
         ),
+      ),
+    );
+  }
+
+  Widget _bookPlaceholder(List<Color> gradient) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: gradient,
+        ),
+      ),
+      child: const Center(
+        child: Icon(Icons.auto_stories, size: 56, color: Colors.white24),
       ),
     );
   }

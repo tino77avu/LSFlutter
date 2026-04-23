@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'calificar_donante_dialog.dart';
+import 'chat_donacion_page.dart';
 
 /// Panel del usuario: resumen, actividad, pestañas y listas de libros.
 class MiPanelPage extends StatefulWidget {
@@ -13,10 +17,246 @@ class MiPanelPage extends StatefulWidget {
 
 class _MiPanelPageState extends State<MiPanelPage> {
   int _tab = 0;
+  bool _loadingActividad = true;
+  String? _errorActividad;
+  List<_RecentActivityItem> _actividad = const [];
+  bool _loadingPanelData = true;
+  String? _errorPanelData;
+  int _totalPublicados = 0;
+  int _disponibles = 0;
+  int _porResponder = 0;
+  int _donacionesHechas = 0;
+  int _librosObtenidos = 0;
+  int _recibidas = 0;
+  int _enviadas = 0;
+  List<_LibroFila> _misLibros = const [];
 
-  static const _totalPublicados = 12;
-  static const _recibidas = 1;
-  static const _enviadas = 1;
+  @override
+  void initState() {
+    super.initState();
+    _loadPanelData();
+    _loadActividadReciente();
+  }
+
+  Future<void> _loadPanelData() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      if (!mounted) return;
+      setState(() {
+        _loadingPanelData = false;
+        _errorPanelData = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _loadingPanelData = true;
+      _errorPanelData = null;
+    });
+
+    try {
+      final myBooksRows = await Supabase.instance.client
+          .from('books')
+          .select('title,author,category,city,status')
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
+
+      final myBooks = (myBooksRows as List<dynamic>).map((row) {
+        final m = Map<String, dynamic>.from(row as Map);
+        return _LibroFila(
+          titulo: (m['title'] ?? '').toString().trim(),
+          autor: (m['author'] ?? '').toString().trim(),
+          categoria: _emptyToNull((m['category'] ?? '').toString().trim()),
+          ubicacion: (m['city'] ?? '').toString().trim(),
+          status: (m['status'] ?? '').toString().trim(),
+        );
+      }).toList();
+
+      final receivedRows = await Supabase.instance.client
+          .from('book_requests')
+          .select('status,books!inner(user_id)')
+          .eq('books.user_id', userId);
+
+      final sentRows = await Supabase.instance.client
+          .from('book_requests')
+          .select('status')
+          .eq('requester_id', userId);
+
+      final totalPublicados = myBooks.length;
+      final disponibles = myBooks
+          .where((b) => _normalizeText(b.status) == 'disponible')
+          .length;
+
+      final received = receivedRows as List<dynamic>;
+      final porResponder = received.where((r) {
+        final status = _normalizeText(
+          (Map<String, dynamic>.from(r as Map))['status'].toString(),
+        );
+        return status == 'pendiente';
+      }).length;
+      final donacionesHechas = received.where((r) {
+        final status = _normalizeText(
+          (Map<String, dynamic>.from(r as Map))['status'].toString(),
+        );
+        return status == 'aceptada' || status == 'donado' || status == 'donada';
+      }).length;
+
+      final sent = sentRows as List<dynamic>;
+      final librosObtenidos = sent.where((r) {
+        final status = _normalizeText(
+          (Map<String, dynamic>.from(r as Map))['status'].toString(),
+        );
+        return status == 'aceptada' || status == 'donado' || status == 'donada';
+      }).length;
+
+      if (!mounted) return;
+      setState(() {
+        _misLibros = myBooks;
+        _totalPublicados = totalPublicados;
+        _disponibles = disponibles;
+        _porResponder = porResponder;
+        _donacionesHechas = donacionesHechas;
+        _librosObtenidos = librosObtenidos;
+        _recibidas = received.length;
+        _enviadas = sent.length;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(
+        () => _errorPanelData = e.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) setState(() => _loadingPanelData = false);
+    }
+  }
+
+  String _normalizeText(String value) => value.toLowerCase().trim();
+
+  String? _emptyToNull(String value) {
+    if (value.trim().isEmpty) return null;
+    return value.trim();
+  }
+
+  Future<void> _loadActividadReciente() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      if (!mounted) return;
+      setState(() {
+        _loadingActividad = false;
+        _actividad = const [];
+        _errorActividad = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _loadingActividad = true;
+      _errorActividad = null;
+    });
+
+    try {
+      final rows = await Supabase.instance.client
+          .from('book_requests')
+          .select(
+            'id,requester_id,status,message,created_at,books!inner(title,user_id)',
+          )
+          .order('created_at', ascending: false)
+          .limit(12);
+
+      final activity = <_RecentActivityItem>[];
+      for (final row in rows as List<dynamic>) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final book = Map<String, dynamic>.from(m['books'] as Map);
+        final requesterId = (m['requester_id'] ?? '').toString();
+        final status = (m['status'] ?? '').toString().toLowerCase().trim();
+        final title = (book['title'] ?? 'Libro').toString();
+        final ownerId = (book['user_id'] ?? '').toString();
+        final createdAt = DateTime.tryParse(
+          (m['created_at'] ?? '').toString(),
+        )?.toLocal();
+
+        if (ownerId == userId && requesterId != userId) {
+          final isPending = status == 'pendiente';
+          activity.add(
+            _RecentActivityItem(
+              dotColor: isPending
+                  ? const Color(0xFFFFC107)
+                  : MiPanelPage._green,
+              icon: isPending ? Icons.mail_outline : Icons.check_circle_outline,
+              iconColor: isPending
+                  ? const Color(0xFFF9A825)
+                  : MiPanelPage._green,
+              title: isPending
+                  ? "Nueva solicitud para '$title'"
+                  : "Solicitud para '$title': ${_capitalize(status)}",
+              subtitle: 'De: ${_shortUser(requesterId)}',
+              time: _timeAgo(createdAt),
+            ),
+          );
+          continue;
+        }
+
+        if (requesterId == userId) {
+          if (status == 'aceptada' ||
+              status == 'donado' ||
+              status == 'donada') {
+            activity.add(
+              _RecentActivityItem(
+                dotColor: MiPanelPage._green,
+                icon: Icons.check_circle_outline,
+                iconColor: MiPanelPage._green,
+                title: 'Tu solicitud fue aceptada',
+                subtitle: "'$title'",
+                time: _timeAgo(createdAt),
+              ),
+            );
+          } else if (status == 'pendiente') {
+            activity.add(
+              _RecentActivityItem(
+                dotColor: const Color(0xFFFFC107),
+                icon: Icons.schedule_outlined,
+                iconColor: const Color(0xFFF9A825),
+                title: 'Tu solicitud está pendiente',
+                subtitle: "'$title'",
+                time: _timeAgo(createdAt),
+              ),
+            );
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _actividad = activity.take(4).toList());
+    } catch (e) {
+      if (!mounted) return;
+      setState(
+        () => _errorActividad = e.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) setState(() => _loadingActividad = false);
+    }
+  }
+
+  String _shortUser(String userId) {
+    if (userId.length <= 8) return userId;
+    return '${userId.substring(0, 8)}...';
+  }
+
+  String _timeAgo(DateTime? time) {
+    if (time == null) return 'hace un momento';
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'hace un momento';
+    if (diff.inHours < 1) return 'hace ${diff.inMinutes} min';
+    if (diff.inDays < 1) return 'hace ${diff.inHours} h';
+    if (diff.inDays < 30) return 'hace ${diff.inDays} días';
+    final months = (diff.inDays / 30).floor();
+    return 'hace $months mes${months == 1 ? '' : 'es'}';
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return value[0].toUpperCase() + value.substring(1);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +280,10 @@ class _MiPanelPageState extends State<MiPanelPage> {
               const SizedBox(height: 8),
               Text(
                 'Gestiona tus libros y solicitudes de donación',
-                style: TextStyle(fontSize: 15, color: Colors.black.withValues(alpha: 0.52)),
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Colors.black.withValues(alpha: 0.52),
+                ),
               ),
               const SizedBox(height: 22),
               LayoutBuilder(
@@ -51,7 +294,7 @@ class _MiPanelPageState extends State<MiPanelPage> {
                       icon: Icons.menu_book_outlined,
                       iconBg: const Color(0xFFE8F5E9),
                       iconColor: MiPanelPage._green,
-                      value: '11',
+                      value: '$_disponibles',
                       valueColor: MiPanelPage._green,
                       label: 'Disponibles',
                       sublabel: 'de $_totalPublicados publicados',
@@ -60,7 +303,7 @@ class _MiPanelPageState extends State<MiPanelPage> {
                       icon: Icons.schedule_outlined,
                       iconBg: const Color(0xFFF0F0F0),
                       iconColor: const Color(0xFF616161),
-                      value: '0',
+                      value: '$_porResponder',
                       valueColor: const Color(0xFF424242),
                       label: 'Por responder',
                       sublabel: 'solicitudes recibidas',
@@ -69,7 +312,7 @@ class _MiPanelPageState extends State<MiPanelPage> {
                       icon: Icons.check_circle_outline,
                       iconBg: const Color(0xFFE8F5E9),
                       iconColor: MiPanelPage._green,
-                      value: '1',
+                      value: '$_donacionesHechas',
                       valueColor: MiPanelPage._green,
                       label: 'Donaciones hechas',
                       sublabel: 'solicitudes aceptadas',
@@ -78,7 +321,7 @@ class _MiPanelPageState extends State<MiPanelPage> {
                       icon: Icons.send_outlined,
                       iconBg: const Color(0xFFE8F5E9),
                       iconColor: MiPanelPage._green,
-                      value: '1',
+                      value: '$_librosObtenidos',
                       valueColor: MiPanelPage._green,
                       label: 'Libros obtenidos',
                       sublabel: 'de $_enviadas enviadas',
@@ -134,7 +377,11 @@ class _MiPanelPageState extends State<MiPanelPage> {
           children: [
             Row(
               children: [
-                Icon(Icons.show_chart, size: 22, color: Colors.black.withValues(alpha: 0.55)),
+                Icon(
+                  Icons.show_chart,
+                  size: 22,
+                  color: Colors.black.withValues(alpha: 0.55),
+                ),
                 const SizedBox(width: 8),
                 const Text(
                   'Actividad reciente',
@@ -143,24 +390,63 @@ class _MiPanelPageState extends State<MiPanelPage> {
               ],
             ),
             const SizedBox(height: 18),
-            _TimelineActivity(
-              dotColor: const Color(0xFFFFC107),
-              icon: Icons.mail_outline,
-              iconColor: const Color(0xFFF9A825),
-              title: "Nueva solicitud para 'Ciudad y Los Perros'",
-              subtitle: 'De: n00325473',
-              time: 'hace 21 días',
-              showLineBelow: true,
-            ),
-            _TimelineActivity(
-              dotColor: MiPanelPage._green,
-              icon: Icons.check_circle_outline,
-              iconColor: MiPanelPage._green,
-              title: 'Tu solicitud fue aceptada',
-              subtitle: "'Empanaditas'",
-              time: 'hace 21 días',
-              showLineBelow: false,
-            ),
+            if (_loadingActividad)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else if (_errorActividad != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'No se pudo cargar la actividad.',
+                      style: TextStyle(
+                        color: Colors.red.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _errorActividad!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.black.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _loadActividadReciente,
+                      child: const Text('Reintentar'),
+                    ),
+                  ],
+                ),
+              )
+            else if (_actividad.isEmpty)
+              Text(
+                'Sin actividad reciente por el momento.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.black.withValues(alpha: 0.5),
+                ),
+              )
+            else
+              Column(
+                children: [
+                  for (var i = 0; i < _actividad.length; i++)
+                    _TimelineActivity(
+                      dotColor: _actividad[i].dotColor,
+                      icon: _actividad[i].icon,
+                      iconColor: _actividad[i].iconColor,
+                      title: _actividad[i].title,
+                      subtitle: _actividad[i].subtitle,
+                      time: _actividad[i].time,
+                      showLineBelow: i != _actividad.length - 1,
+                    ),
+                ],
+              ),
           ],
         ),
       ),
@@ -222,38 +508,46 @@ class _MiPanelPageState extends State<MiPanelPage> {
   }
 
   Widget _misLibrosLista() {
-    const libros = [
-      _LibroFila(
-        titulo: 'Muñeca de huesos',
-        autor: 'Black, Holly',
-        categoria: null,
-        ubicacion: 'Surco - Lima',
-      ),
-      _LibroFila(
-        titulo: 'Morir no es nada del otro mundo',
-        autor: 'Vila Sexto, Carlos',
-        categoria: 'Otro',
-        ubicacion: 'Lima - Surco',
-      ),
-      _LibroFila(
-        titulo: 'Mi primer libro de los números',
-        autor: 'Carle, Eric',
-        categoria: 'Infantil',
-        ubicacion: 'Santiago de Surco - Lima',
-      ),
-      _LibroFila(
-        titulo: 'Animales mágicos. La granja',
-        autor: 'Medeiros, Giovana',
-        categoria: 'Infantil',
-        ubicacion: 'Santiago de Surco - Lima',
-      ),
-      _LibroFila(
-        titulo: 'Creciendo con Montessori. El huerto',
-        autor: 'Moncho, Klara y Teba, Alicia',
-        categoria: 'Infantil',
-        ubicacion: 'Santiago de Surco - Lima',
-      ),
-    ];
+    if (_loadingPanelData) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_errorPanelData != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'No se pudo cargar tus libros.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _errorPanelData!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _loadPanelData,
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -263,7 +557,27 @@ class _MiPanelPageState extends State<MiPanelPage> {
           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
         ),
         const SizedBox(height: 12),
-        ...libros.map((l) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _LibroCard(libro: l))),
+        if (_misLibros.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+            ),
+            child: Text(
+              'Aún no tienes libros publicados.',
+              style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
+            ),
+          )
+        else
+          ..._misLibros.map(
+            (l) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _LibroCard(libro: l),
+            ),
+          ),
       ],
     );
   }
@@ -272,9 +586,7 @@ class _MiPanelPageState extends State<MiPanelPage> {
   Widget _recibidasLista() {
     return const Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _RecibidaSolicitudCard(),
-      ],
+      children: [_RecibidaSolicitudCard()],
     );
   }
 
@@ -289,7 +601,11 @@ class _MiPanelPageState extends State<MiPanelPage> {
             CircleAvatar(
               radius: 26,
               backgroundColor: const Color(0xFFE8F5E9),
-              child: Icon(Icons.menu_book_rounded, color: MiPanelPage._green, size: 28),
+              child: Icon(
+                Icons.menu_book_rounded,
+                color: MiPanelPage._green,
+                size: 28,
+              ),
             ),
             const SizedBox(width: 14),
             const Expanded(
@@ -361,20 +677,49 @@ class _SummaryCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               value,
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: valueColor, height: 1),
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: valueColor,
+                height: 1,
+              ),
             ),
             const SizedBox(height: 6),
-            Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
             const SizedBox(height: 2),
             Text(
               sublabel,
-              style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.45)),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _RecentActivityItem {
+  const _RecentActivityItem({
+    required this.dotColor,
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.time,
+  });
+
+  final Color dotColor;
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final String time;
 }
 
 class _TimelineActivity extends StatelessWidget {
@@ -410,7 +755,10 @@ class _TimelineActivity extends StatelessWidget {
                 Container(
                   width: 12,
                   height: 12,
-                  decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                  ),
                 ),
                 if (showLineBelow)
                   Container(
@@ -429,15 +777,36 @@ class _TimelineActivity extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
                 const SizedBox(height: 4),
-                Text(subtitle, style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.5))),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.black.withValues(alpha: 0.5),
+                  ),
+                ),
                 const SizedBox(height: 4),
-                Text(time, style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.38))),
+                Text(
+                  time,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black.withValues(alpha: 0.38),
+                  ),
+                ),
               ],
             ),
           ),
-          Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.25)),
+          Icon(
+            Icons.chevron_right,
+            color: Colors.black.withValues(alpha: 0.25),
+          ),
         ],
       ),
     );
@@ -496,34 +865,53 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          Icon(Icons.person_outline, size: 18, color: Colors.black.withValues(alpha: 0.45)),
+                          Icon(
+                            Icons.person_outline,
+                            size: 18,
+                            color: Colors.black.withValues(alpha: 0.45),
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             'n00325473',
-                            style: TextStyle(fontSize: 14, color: Colors.black.withValues(alpha: 0.5)),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.black.withValues(alpha: 0.5),
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Text(
                         '28 de marzo · 22:07',
-                        style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.42)),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withValues(alpha: 0.42),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: _statusBg,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _statusFg.withValues(alpha: 0.35)),
+                    border: Border.all(
+                      color: _statusFg.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: const [
-                      Icon(Icons.check_circle_outline, size: 17, color: _statusFg),
+                      Icon(
+                        Icons.check_circle_outline,
+                        size: 17,
+                        color: _statusFg,
+                      ),
                       SizedBox(width: 5),
                       Text(
                         'Aceptada',
@@ -549,12 +937,20 @@ class _RecibidaSolicitudCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.chat_bubble_outline, size: 20, color: Colors.black.withValues(alpha: 0.4)),
+                  Icon(
+                    Icons.chat_bubble_outline,
+                    size: 20,
+                    color: Colors.black.withValues(alpha: 0.4),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Dóname we',
-                      style: TextStyle(fontSize: 14, height: 1.45, color: Colors.black.withValues(alpha: 0.75)),
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.45,
+                        color: Colors.black.withValues(alpha: 0.75),
+                      ),
                     ),
                   ),
                 ],
@@ -571,7 +967,11 @@ class _RecibidaSolicitudCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.check_box_rounded, color: _statusFg, size: 22),
+                  const Icon(
+                    Icons.check_box_rounded,
+                    color: _statusFg,
+                    size: 22,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -593,13 +993,22 @@ class _RecibidaSolicitudCard extends StatelessWidget {
               runSpacing: 12,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: () => abrirChatDonacion(
+                    context,
+                    otroUsuario: 'n00325473',
+                    tituloLibro: 'Ciudad y Los Perros',
+                  ),
                   style: OutlinedButton.styleFrom(
                     backgroundColor: _btnSecondary,
                     foregroundColor: const Color(0xFF333333),
                     side: BorderSide(color: Colors.grey.shade300),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   icon: const Icon(Icons.chat_bubble_outline, size: 20),
                   label: const Text('Abrir chat'),
@@ -609,8 +1018,13 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                   style: FilledButton.styleFrom(
                     backgroundColor: _primary,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   icon: const Icon(Icons.check_circle_outline, size: 20),
                   label: const Text('Confirmar entrega'),
@@ -664,23 +1078,36 @@ class _EnviadaSolicitudCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Icon(Icons.open_in_new, size: 18, color: Colors.black.withValues(alpha: 0.45)),
+                        child: Icon(
+                          Icons.open_in_new,
+                          size: 18,
+                          color: Colors.black.withValues(alpha: 0.45),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: _statusBg,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _statusFg.withValues(alpha: 0.35)),
+                    border: Border.all(
+                      color: _statusFg.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: const [
-                      Icon(Icons.check_circle_outline, size: 17, color: _statusFg),
+                      Icon(
+                        Icons.check_circle_outline,
+                        size: 17,
+                        color: _statusFg,
+                      ),
                       SizedBox(width: 5),
                       Text(
                         'Aceptada',
@@ -698,7 +1125,10 @@ class _EnviadaSolicitudCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               'Solicitado el 28 de marzo, 2026',
-              style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.48)),
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.black.withValues(alpha: 0.48),
+              ),
             ),
             const SizedBox(height: 10),
             Text(
@@ -751,13 +1181,19 @@ class _EnviadaSolicitudCard extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () {},
+                      onPressed: () => abrirChatDonacion(
+                        context,
+                        otroUsuario: 'Donante',
+                        tituloLibro: 'Empanaditas',
+                      ),
                       style: OutlinedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: const Color(0xFF333333),
                         side: BorderSide(color: Colors.grey.shade300),
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       icon: const Icon(Icons.chat_bubble_outline, size: 20),
                       label: const Text('Abrir chat'),
@@ -770,12 +1206,25 @@ class _EnviadaSolicitudCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: () async {
+                  final ok = await mostrarCalificarDonante(
+                    context,
+                    tituloLibro: 'Empanaditas',
+                  );
+                  if (!context.mounted) return;
+                  if (ok == true) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Gracias por tu reseña.')),
+                    );
+                  }
+                },
                 style: OutlinedButton.styleFrom(
                   foregroundColor: _orange,
                   side: const BorderSide(color: _orange, width: 1.2),
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 icon: const Icon(Icons.star_border, size: 22, color: _orange),
                 label: const Text(
@@ -822,7 +1271,11 @@ class _SegTab extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: selected ? Colors.black87 : const Color(0xFF666666)),
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? Colors.black87 : const Color(0xFF666666),
+              ),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -839,7 +1292,9 @@ class _SegTab extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: selected ? const Color(0xFFE8F5E9) : const Color(0xFFDADADA),
+                  color: selected
+                      ? const Color(0xFFE8F5E9)
+                      : const Color(0xFFDADADA),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -847,7 +1302,9 @@ class _SegTab extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: selected ? const Color(0xFF2E7D32) : const Color(0xFF555555),
+                    color: selected
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFF555555),
                   ),
                 ),
               ),
@@ -864,6 +1321,7 @@ class _LibroFila {
     required this.titulo,
     required this.autor,
     required this.ubicacion,
+    required this.status,
     this.categoria,
   });
 
@@ -871,12 +1329,22 @@ class _LibroFila {
   final String autor;
   final String? categoria;
   final String ubicacion;
+  final String status;
 }
 
 class _LibroCard extends StatelessWidget {
   const _LibroCard({required this.libro});
 
   final _LibroFila libro;
+
+  String get _statusLabel {
+    final s = libro.status.trim();
+    if (s.isEmpty) return 'Sin estado';
+    return s[0].toUpperCase() + s.substring(1);
+  }
+
+  bool get _statusIsAvailable =>
+      libro.status.toLowerCase().trim() == 'disponible';
 
   @override
   Widget build(BuildContext context) {
@@ -902,7 +1370,11 @@ class _LibroCard extends StatelessWidget {
                     end: Alignment.bottomRight,
                   ),
                 ),
-                child: const Icon(Icons.menu_book, color: Colors.white24, size: 28),
+                child: const Icon(
+                  Icons.menu_book,
+                  color: Colors.white24,
+                  size: 28,
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -916,27 +1388,46 @@ class _LibroCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           libro.titulo,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, height: 1.25),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            height: 1.25,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
-                          border: Border.all(color: const Color(0xFF2E7D32)),
+                          border: Border.all(
+                            color: _statusIsAvailable
+                                ? const Color(0xFF2E7D32)
+                                : const Color(0xFF757575),
+                          ),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.circle, size: 7, color: Color(0xFF2E7D32)),
+                          children: [
+                            Icon(
+                              Icons.circle,
+                              size: 7,
+                              color: _statusIsAvailable
+                                  ? const Color(0xFF2E7D32)
+                                  : const Color(0xFF757575),
+                            ),
                             SizedBox(width: 5),
                             Text(
-                              'Disponible',
+                              _statusLabel,
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF2E7D32),
+                                color: _statusIsAvailable
+                                    ? const Color(0xFF2E7D32)
+                                    : const Color(0xFF757575),
                               ),
                             ),
                           ],
@@ -947,7 +1438,10 @@ class _LibroCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     libro.autor,
-                    style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.5)),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.black.withValues(alpha: 0.5),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Wrap(
@@ -956,16 +1450,30 @@ class _LibroCard extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       if (libro.categoria != null) ...[
-                        Icon(Icons.label_outline, size: 15, color: Colors.black.withValues(alpha: 0.4)),
+                        Icon(
+                          Icons.label_outline,
+                          size: 15,
+                          color: Colors.black.withValues(alpha: 0.4),
+                        ),
                         Text(
                           libro.categoria!,
-                          style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.45)),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.black.withValues(alpha: 0.45),
+                          ),
                         ),
                       ],
-                      Icon(Icons.place_outlined, size: 15, color: Colors.black.withValues(alpha: 0.4)),
+                      Icon(
+                        Icons.place_outlined,
+                        size: 15,
+                        color: Colors.black.withValues(alpha: 0.4),
+                      ),
                       Text(
                         libro.ubicacion,
-                        style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.45)),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withValues(alpha: 0.45),
+                        ),
                       ),
                     ],
                   ),
@@ -974,9 +1482,18 @@ class _LibroCard extends StatelessWidget {
             ),
             Column(
               children: [
-                IconButton(onPressed: () {}, icon: const Icon(Icons.visibility_outlined, size: 20)),
-                IconButton(onPressed: () {}, icon: const Icon(Icons.edit_outlined, size: 20)),
-                IconButton(onPressed: () {}, icon: const Icon(Icons.delete_outline, size: 20)),
+                IconButton(
+                  onPressed: () {},
+                  icon: const Icon(Icons.visibility_outlined, size: 20),
+                ),
+                IconButton(
+                  onPressed: () {},
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                ),
+                IconButton(
+                  onPressed: () {},
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                ),
               ],
             ),
           ],

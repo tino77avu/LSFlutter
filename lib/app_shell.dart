@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'app_destination.dart';
 import 'app_top_bar.dart';
+import 'auth_service.dart';
 import 'explore_page.dart';
 import 'impacto_page.dart';
 import 'inicio_page.dart';
 import 'mi_panel_page.dart';
 import 'compartir_libro_page.dart';
-import 'login_page.dart';
 import 'mi_perfil_page.dart';
+import 'mis_favoritos_page.dart';
+import 'recomendaciones_page.dart';
 
 /// Contenedor con barra superior y cuerpo según la sección elegida.
 class AppShell extends StatefulWidget {
@@ -25,9 +27,20 @@ class _AppShellState extends State<AppShell> {
 
   void _onNav(AppDestination d) => setState(() => _dest = d);
 
-  void _logout(BuildContext context) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+  Future<void> _logout(BuildContext context) async {
+    try {
+      await AuthService.instance.logout();
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo cerrar sesión.')),
+      );
+    }
+  }
+
+  void _openRecomendaciones(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const RecomendacionesPage()),
     );
   }
 
@@ -68,9 +81,17 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  void _openMisFavoritos(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const MisFavoritosPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bg = _dest == AppDestination.explorar ? Colors.white : const Color(0xFFF5F0E8);
+    final bg = _dest == AppDestination.explorar
+        ? Colors.white
+        : const Color(0xFFF5F0E8);
 
     return Scaffold(
       backgroundColor: bg,
@@ -81,8 +102,12 @@ class _AppShellState extends State<AppShell> {
             AppTopBar(
               current: _dest,
               onDestinationSelected: _onNav,
-              onLogout: () => _logout(context),
+              onLogout: () {
+                _logout(context);
+              },
               onOpenProfile: () => _openMiPerfil(context),
+              onOpenRecomendaciones: () => _openRecomendaciones(context),
+              onOpenFavorites: () => _openMisFavoritos(context),
             ),
             Expanded(child: _body()),
           ],
@@ -94,7 +119,7 @@ class _AppShellState extends State<AppShell> {
   Widget _body() {
     switch (_dest) {
       case AppDestination.inicio:
-        return const InicioPage();
+        return InicioPage(onIrExplorar: () => _onNav(AppDestination.explorar));
       case AppDestination.explorar:
         return const ExplorePage();
       case AppDestination.impacto:

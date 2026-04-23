@@ -1,12 +1,55 @@
 import 'package:flutter/material.dart';
 
+import 'books_service.dart';
 import 'compartir_libro_page.dart';
 
 /// Contenido de la pestaña Inicio (panel principal).
-class InicioPage extends StatelessWidget {
-  const InicioPage({super.key});
+class InicioPage extends StatefulWidget {
+  const InicioPage({super.key, required this.onIrExplorar});
+
+  /// Abre la sección Explorar (catálogo / búsqueda).
+  final VoidCallback onIrExplorar;
 
   static const Color _brandGreen = Color(0xFF1A533E);
+
+  @override
+  State<InicioPage> createState() => _InicioPageState();
+}
+
+class _InicioPageState extends State<InicioPage> {
+  static const Color _brandGreen = InicioPage._brandGreen;
+  bool _loadingStats = true;
+  String? _statsError;
+  HomeStats _stats = const HomeStats(
+    availableBooks: 0,
+    myPublications: 0,
+    donatedBooks: 0,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    setState(() {
+      _loadingStats = true;
+      _statsError = null;
+    });
+    try {
+      final stats = await BooksService.instance.loadHomeStats();
+      if (!mounted) return;
+      setState(() => _stats = stats);
+    } catch (e) {
+      if (!mounted) return;
+      setState(
+        () => _statsError = e.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) setState(() => _loadingStats = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -20,7 +63,7 @@ class InicioPage extends StatelessWidget {
               children: [
                 Expanded(flex: 5, child: _heroSection(context)),
                 const SizedBox(width: 32),
-                Expanded(flex: 4, child: _statsPanel()),
+                Expanded(flex: 4, child: _statsPanel(context)),
               ],
             )
           : Column(
@@ -28,7 +71,7 @@ class InicioPage extends StatelessWidget {
               children: [
                 _heroSection(context),
                 const SizedBox(height: 28),
-                _statsPanel(),
+                _statsPanel(context),
               ],
             ),
     );
@@ -89,19 +132,29 @@ class InicioPage extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: _brandGreen,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 16,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               icon: const Icon(Icons.card_giftcard_outlined),
               label: const Text('Compartir un libro'),
             ),
             OutlinedButton.icon(
-              onPressed: () {},
+              onPressed: widget.onIrExplorar,
               style: OutlinedButton.styleFrom(
                 foregroundColor: _brandGreen,
                 side: const BorderSide(color: _brandGreen, width: 1.2),
-                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 22,
+                  vertical: 16,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               icon: const Icon(Icons.search),
               label: const Text('Encontrar un libro'),
@@ -113,7 +166,10 @@ class InicioPage extends StatelessWidget {
           spacing: 24,
           runSpacing: 12,
           children: [
-            _FeaturePill(icon: Icons.verified_user_outlined, text: 'Plataforma segura'),
+            _FeaturePill(
+              icon: Icons.verified_user_outlined,
+              text: 'Plataforma segura',
+            ),
             _FeaturePill(icon: Icons.bolt_outlined, text: 'Gratis y rápido'),
             _FeaturePill(icon: Icons.public, text: 'Impacto real'),
           ],
@@ -122,14 +178,54 @@ class InicioPage extends StatelessWidget {
     );
   }
 
-  Widget _statsPanel() {
+  Widget _statsPanel(BuildContext context) {
+    if (_loadingStats) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (_statsError != null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'No se pudieron cargar las métricas.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _statsError!,
+              style: TextStyle(color: Colors.black.withValues(alpha: 0.6)),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: _loadStats,
+              style: FilledButton.styleFrom(backgroundColor: _brandGreen),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       children: [
         _statCard(
           wide: true,
           background: const Color(0xFFE8EDE9),
           icon: const Text('📚', style: TextStyle(fontSize: 28)),
-          value: '6',
+          value: _stats.availableBooks.toString(),
           label: 'libros disponibles',
         ),
         const SizedBox(height: 12),
@@ -139,7 +235,7 @@ class InicioPage extends StatelessWidget {
               child: _statCard(
                 background: const Color(0xFFF5E6C8),
                 icon: const Text('🎁', style: TextStyle(fontSize: 26)),
-                value: '2',
+                value: _stats.donatedBooks.toString(),
                 label: 'libros donados',
               ),
             ),
@@ -148,7 +244,7 @@ class InicioPage extends StatelessWidget {
               child: _statCard(
                 background: const Color(0xFFDFF0E4),
                 icon: const Text('🌱', style: TextStyle(fontSize: 26)),
-                value: '∞',
+                value: _stats.impactedLives.toString(),
                 label: 'vidas impactadas',
               ),
             ),
@@ -159,7 +255,7 @@ class InicioPage extends StatelessWidget {
           wide: true,
           background: const Color(0xFFE4EDF5),
           icon: const Text('✍️', style: TextStyle(fontSize: 26)),
-          value: '12',
+          value: _stats.myPublications.toString(),
           label: 'mis publicaciones',
         ),
       ],
@@ -188,11 +284,18 @@ class InicioPage extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             value,
-            style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Color(0xFF2C2C2C)),
+            style: const TextStyle(
+              fontSize: 34,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF2C2C2C),
+            ),
           ),
           Text(
             label,
-            style: TextStyle(fontSize: 14, color: Colors.black.withValues(alpha: 0.55)),
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.black.withValues(alpha: 0.55),
+            ),
           ),
         ],
       ),
@@ -213,7 +316,10 @@ class _FeaturePill extends StatelessWidget {
       children: [
         Icon(icon, size: 20, color: const Color(0xFF5C5C5C)),
         const SizedBox(width: 8),
-        Text(text, style: const TextStyle(fontSize: 14, color: Color(0xFF5C5C5C))),
+        Text(
+          text,
+          style: const TextStyle(fontSize: 14, color: Color(0xFF5C5C5C)),
+        ),
       ],
     );
   }
