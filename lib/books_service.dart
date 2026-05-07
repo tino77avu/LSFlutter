@@ -51,6 +51,8 @@ class BookDetail {
     this.description,
     this.createdAt,
     required this.ownerDisplayName,
+    this.ownerRatingAvg,
+    this.ownerRatingCount = 0,
   });
 
   final int id;
@@ -66,6 +68,8 @@ class BookDetail {
   final String? description;
   final DateTime? createdAt;
   final String ownerDisplayName;
+  final double? ownerRatingAvg;
+  final int ownerRatingCount;
 }
 
 class FavoriteBookItem {
@@ -220,6 +224,7 @@ class BooksService {
   /// Estado inicial del libro recién publicado (ajusta si tu DB usa otro texto).
   static const String defaultBookStatus = 'disponible';
   static const String _bookImagesBucket = 'book-images';
+  static const String _bookRequestsTable = 'book_requests';
 
   Future<Set<int>> loadFavoriteBookIds() async {
     final user = _client.auth.currentUser;
@@ -532,6 +537,8 @@ class BooksService {
       final m = Map<String, dynamic>.from(bookRow as Map);
       final uid = _cellToString(m['user_id']).trim();
       var ownerName = 'Miembro de la comunidad';
+      double? ownerRatingAvg;
+      var ownerRatingCount = 0;
       if (uid.isNotEmpty) {
         try {
           final prof = await _client
@@ -546,6 +553,30 @@ class BooksService {
           }
         } on PostgrestException {
           // Sin perfil o sin permiso: se mantiene el nombre por defecto.
+        }
+        try {
+          final ratings = await _client
+              .from('reviews')
+              .select('rating')
+              .eq('reviewed_id', uid);
+          final values = <double>[];
+          for (final row in ratings as List<dynamic>) {
+            final m = Map<String, dynamic>.from(row as Map);
+            final raw = m['rating'];
+            if (raw is num) {
+              values.add(raw.toDouble());
+            } else {
+              final parsed = double.tryParse('$raw');
+              if (parsed != null) values.add(parsed);
+            }
+          }
+          ownerRatingCount = values.length;
+          if (values.isNotEmpty) {
+            final sum = values.reduce((a, b) => a + b);
+            ownerRatingAvg = sum / values.length;
+          }
+        } on PostgrestException {
+          // Si falla reviews por permisos, omitimos rating.
         }
       }
 
@@ -572,6 +603,8 @@ class BooksService {
         description: desc.isEmpty ? null : desc,
         createdAt: createdAt,
         ownerDisplayName: ownerName,
+        ownerRatingAvg: ownerRatingAvg,
+        ownerRatingCount: ownerRatingCount,
       );
     } on PostgrestException catch (e) {
       throw Exception(e.message);
@@ -646,6 +679,87 @@ class BooksService {
     try {
       await _client.from('books').insert(payload);
     } on PostgrestException catch (e) {
+      throw Exception(e.message);
+    }
+  }
+
+  /// Crea una solicitud para pedir un libro al donante.
+  Future<void> submitBookRequest({
+    required int bookId,
+    required String message,
+    required String ownerUserId,
+    String? bookTitle,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw Exception('Debes iniciar sesión para solicitar un libro.');
+    }
+    if (ownerUserId.trim().isNotEmpty && ownerUserId.trim() == user.id) {
+      throw Exception('No puedes solicitar un libro publicado por ti.');
+    }
+
+    final cleanMessage = message.trim();
+    if (cleanMessage.isEmpty) {
+      throw Exception('Escribe un mensaje para el donante.');
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final payload = <String, dynamic>{
+      'book_id': bookId,
+      'requester_id': user.id,
+      'message': cleanMessage,
+      'status': 'pendiente',
+      'created_at': now,
+      'updated_at': now,
+    };
+
+    try {
+      final existing = await _client
+          .from(_bookRequestsTable)
+          .select('id,status')
+          .eq('book_id', bookId)
+          .eq('requester_id', user.id);
+      final hasOpenRequest = (existing as List<dynamic>).any((row) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final status = _normalizeText(_cellToString(m['status']));
+        return status == 'pendiente' || status == 'aceptada';
+      });
+      if (hasOpenRequest) {
+        throw Exception('Ya tienes una solicitud activa para este libro.');
+      }
+
+      final inserted = await _client
+          .from(_bookRequestsTable)
+          .insert(payload)
+          .select('id')
+          .single();
+      final requestId = _cellToString(
+        Map<String, dynamic>.from(inserted as Map)['id'],
+      ).trim();
+
+      final title = (bookTitle ?? '').trim();
+      final safeTitle = title.isEmpty ? 'un libro' : '"$title"';
+      try {
+        await _client.from('notifications').insert({
+          'user_id': ownerUserId.trim(),
+          'type': 'book_request',
+          'title': 'Nueva solicitud recibida',
+          'message': 'Recibiste una solicitud para $safeTitle.',
+          'link': '/mi-panel?tab=recibidas',
+          'related_id': requestId.isEmpty ? '$bookId' : requestId,
+        });
+      } on PostgrestException catch (e) {
+        // La solicitud principal ya fue creada; si notifications tiene RLS,
+        // no bloqueamos el flujo del usuario.
+        debugPrint('[BooksService] notifications insert skipped: ${e.message}');
+      }
+    } on PostgrestException catch (e) {
+      final msg = e.message.toLowerCase();
+      if (msg.contains('row-level security')) {
+        throw Exception(
+          'No tienes permisos para crear la solicitud. Revisa las políticas RLS de book_requests.',
+        );
+      }
       throw Exception(e.message);
     }
   }

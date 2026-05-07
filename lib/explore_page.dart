@@ -202,7 +202,7 @@ class _ExplorePageState extends State<ExplorePage> {
                     TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
-                        hintText: 'Busca por título, autor o palabra clave...',
+                        hintText: 'Buscar por título o autor',
                         prefixIcon: const Icon(
                           Icons.search,
                           color: Color(0xFF6B6B6B),
@@ -243,6 +243,9 @@ class _ExplorePageState extends State<ExplorePage> {
                     return FilterChip(
                       showCheckmark: false,
                       selected: sel,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 2),
                       label: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -252,7 +255,11 @@ class _ExplorePageState extends State<ExplorePage> {
                             color: sel ? Colors.white : const Color(0xFF444444),
                           ),
                           const SizedBox(width: 6),
-                          Text(c.nombre),
+                          Text(
+                            c.nombre,
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
+                          ),
                         ],
                       ),
                       selectedColor: ExplorePage.brandGreen,
@@ -321,9 +328,9 @@ class _ExplorePageState extends State<ExplorePage> {
                 sliver: SliverGrid(
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: crossCount,
-                    mainAxisSpacing: 20,
-                    crossAxisSpacing: 20,
-                    childAspectRatio: 0.62,
+                    mainAxisSpacing: 14,
+                    crossAxisSpacing: 14,
+                    childAspectRatio: w >= 1100 ? 0.88 : (w >= 700 ? 0.82 : 0.9),
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) => _BookCard(
@@ -372,214 +379,207 @@ class _BookCard extends StatelessWidget {
     return libro.userId == userId;
   }
 
+  String get _statusNorm => libro.status.toLowerCase().trim();
+
+  String get _statusBadgeText {
+    if (_isMine) return 'Mi libro';
+    if (_statusNorm == 'disponible') return 'Disponible';
+    if (_statusNorm.contains('donandos') || _statusNorm.contains('donandose')) {
+      return 'Donándose';
+    }
+    if (_statusNorm == 'entregado' || _statusNorm.contains('donad')) {
+      return 'Entregado';
+    }
+    return _prettyText(libro.status);
+  }
+
+  Color get _statusBadgeColor {
+    if (_isMine) return ExplorePage.brandGreen;
+    if (_statusNorm == 'disponible') return const Color(0xFF2E7D32);
+    if (_statusNorm.contains('donandos') || _statusNorm.contains('donandose')) {
+      return const Color(0xFFE65100);
+    }
+    if (_statusNorm == 'entregado' || _statusNorm.contains('donad')) {
+      return const Color(0xFF1565C0);
+    }
+    return const Color(0xFF616161);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 1,
-      shadowColor: Colors.black12,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
+      borderRadius: BorderRadius.circular(18),
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openDetail(context),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14000000),
+                blurRadius: 14,
+                offset: Offset(0, 4),
               ),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (libro.imageUrl != null && libro.imageUrl!.isNotEmpty)
-                    Image.network(
-                      libro.imageUrl!,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return _bookPlaceholder(_defaultGradient);
-                      },
-                      errorBuilder: (context, error, stackTrace) =>
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    height: 132,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (libro.imageUrl != null && libro.imageUrl!.isNotEmpty)
+                          Image.network(
+                            libro.imageUrl!,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, progress) {
+                              if (progress == null) return child;
+                              return _bookPlaceholder(_defaultGradient);
+                            },
+                            errorBuilder: (context, error, stackTrace) =>
+                                _bookPlaceholder(_defaultGradient),
+                          )
+                        else
                           _bookPlaceholder(_defaultGradient),
-                    )
-                  else
-                    _bookPlaceholder(_defaultGradient),
-                  Positioned(
-                    top: 10,
-                    left: 10,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.92),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 8,
-                            color: _isMine
-                                ? ExplorePage.brandGreen
-                                : const Color(0xFF2E7D32),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            _isMine ? 'Mi libro' : 'Disponible',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: _isMine
-                                  ? ExplorePage.brandGreen
-                                  : const Color(0xFF2E7D32),
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.94),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.circle,
+                                  size: 7,
+                                  color: _statusBadgeColor,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  _statusBadgeText,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: _statusBadgeColor,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Row(
-                      children: [
-                        _roundIconBtn(
-                          isFavorite ? Icons.favorite : Icons.favorite_border,
-                          iconColor: isFavorite
-                              ? const Color(0xFFD32F2F)
-                              : const Color(0xFF444444),
-                          onTap: onToggleFavorite,
                         ),
-                        const SizedBox(width: 6),
-                        _roundIconBtn(Icons.inventory_2_outlined),
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: _roundIconBtn(
+                            isFavorite ? Icons.favorite : Icons.favorite_border,
+                            iconColor: isFavorite
+                                ? const Color(0xFFD32F2F)
+                                : const Color(0xFF444444),
+                            onTap: onToggleFavorite,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  Positioned(
-                    left: 10,
-                    bottom: 10,
-                    child: Material(
-                      color: Colors.white.withValues(alpha: 0.94),
-                      elevation: 1,
-                      shadowColor: Colors.black26,
-                      borderRadius: BorderRadius.circular(20),
-                      child: InkWell(
-                        onTap: () {
-                          Navigator.of(context).push<void>(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  ExploreBookDetailPage(bookId: libro.id),
-                            ),
-                          );
-                        },
-                        borderRadius: BorderRadius.circular(20),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.visibility_outlined,
-                                size: 16,
-                                color: Color(0xFF444444),
-                              ),
-                              SizedBox(width: 6),
-                              Text(
-                                'Ver',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF444444),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        libro.category.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6,
-                          color: ExplorePage.brandGreen,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      libro.condition,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.black.withValues(alpha: 0.45),
-                      ),
-                    ),
-                  ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 10),
                 Text(
-                  libro.title,
-                  maxLines: 2,
+                  _prettyText(libro.title),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w700,
                     height: 1.2,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
-                  libro.author,
+                  _prettyText(libro.author),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.black.withValues(alpha: 0.5),
+                    fontSize: 12.5,
+                    color: Colors.black.withValues(alpha: 0.58),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.place_outlined,
-                      size: 16,
-                      color: Colors.black.withValues(alpha: 0.45),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        libro.city,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.black.withValues(alpha: 0.5),
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 6),
+                Text(
+                  'Ciudad: ${_prettyText(libro.city)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.black.withValues(alpha: 0.58),
+                  ),
+                ),
+                Text(
+                  'Categoría: ${_prettyText(libro.category)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.black.withValues(alpha: 0.58),
+                  ),
+                ),
+                Text(
+                  'Estado: ${_prettyText(libro.status)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: ExplorePage.brandGreen,
+                  ),
+                ),
+                const Spacer(),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _openDetail(context),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: ExplorePage.brandGreen,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                  ],
+                    icon: const Icon(Icons.visibility_outlined, size: 18),
+                    label: const Text('Ver detalle'),
+                  ),
                 ),
               ],
             ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  void _openDetail(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ExploreBookDetailPage(bookId: libro.id),
       ),
     );
   }
@@ -616,5 +616,17 @@ class _BookCard extends StatelessWidget {
         child: Icon(Icons.auto_stories, size: 56, color: Colors.white24),
       ),
     );
+  }
+
+  String _prettyText(String raw) {
+    final clean = raw.trim();
+    if (clean.isEmpty) return '—';
+    final parts = clean.split(RegExp(r'\s+'));
+    return parts
+        .map((w) {
+          if (w.isEmpty) return w;
+          return w[0].toUpperCase() + w.substring(1).toLowerCase();
+        })
+        .join(' ');
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_top_bar.dart';
 import 'mis_gustos_lectura_page.dart';
@@ -63,6 +64,10 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
   bool _loadingProfile = true;
   bool _saving = false;
   String? _loadError;
+  UserProfile? _profile;
+  RatingSummary _ratingSummary = const RatingSummary(average: null, count: 0);
+  List<String> _readingCategories = const [];
+  String _readingFreeText = '';
 
   @override
   void initState() {
@@ -84,9 +89,15 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
     });
     try {
       final p = await ProfileService.instance.getMyProfile();
+      final prefs = await ProfileService.instance.getMyReadingPreferences();
+      final rating = await ProfileService.instance.getMyRatingSummary();
       if (!mounted) return;
+      _profile = p;
       _cityCtrl.text = p.city ?? '';
       _phoneCtrl.text = p.phone ?? '';
+      _readingCategories = prefs.categories;
+      _readingFreeText = prefs.freeText;
+      _ratingSummary = rating;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -126,6 +137,24 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
 
   @override
   Widget build(BuildContext context) {
+    final authUser = Supabase.instance.client.auth.currentUser;
+    final displayName = (_profile?.fullName ?? '').trim().isNotEmpty
+        ? (_profile!.fullName.trim())
+        : (authUser?.email?.trim().isNotEmpty ?? false)
+        ? authUser!.email!.trim()
+        : 'Usuario';
+    final displayEmail = (_profile?.email ?? '').trim().isNotEmpty
+        ? (_profile!.email.trim())
+        : (authUser?.email ?? '');
+    final joinedDate =
+        _profile?.createdAt ?? DateTime.tryParse(authUser?.createdAt ?? '');
+    final joinedText = joinedDate == null
+        ? 'Miembro activo'
+        : 'Desde ${_formatMonthYearEs(joinedDate)}';
+    final avatarLetter = displayName.isEmpty
+        ? 'U'
+        : displayName.substring(0, 1).toUpperCase();
+
     return Scaffold(
       backgroundColor: MiPerfilPage._bg,
       appBar: AppBar(
@@ -185,11 +214,16 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                           ),
                           TextButton.icon(
                             onPressed: () {
-                              Navigator.of(context).push<void>(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => const MisGustosLecturaPage(),
-                                ),
-                              );
+                              Navigator.of(context)
+                                  .push<bool>(
+                                    MaterialPageRoute<bool>(
+                                      builder: (_) =>
+                                          const MisGustosLecturaPage(),
+                                    ),
+                                  )
+                                  .then((saved) {
+                                    if (saved == true) _loadProfile();
+                                  });
                             },
                             icon: Icon(
                               Icons.edit_outlined,
@@ -208,25 +242,27 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _chipGusto(
-                            icon: Icons.nightlight_round,
-                            label: 'Terror',
-                            bg: const Color(0xFFF3E8FF),
+                      if (_readingCategories.isEmpty)
+                        Text(
+                          'Aún no registras gustos de lectura.',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.black.withValues(alpha: 0.45),
                           ),
-                          _chipGusto(
-                            icon: Icons.rocket_launch_outlined,
-                            label: 'Ficción',
-                            bg: const Color(0xFFE3F2FD),
-                          ),
-                        ],
-                      ),
+                        )
+                      else
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: _readingCategories
+                              .map((cat) => _chipGustoDesdeTexto(cat))
+                              .toList(),
+                        ),
                       const SizedBox(height: 14),
                       Text(
-                        '«Me gustan las novelas de terror y ficcion»',
+                        _readingFreeText.trim().isEmpty
+                            ? '«Aún no agregaste una nota sobre tus gustos»'
+                            : '«${_readingFreeText.trim()}»',
                         style: TextStyle(
                           fontSize: 14,
                           fontStyle: FontStyle.italic,
@@ -311,8 +347,8 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                           CircleAvatar(
                             radius: 36,
                             backgroundColor: const Color(0xFFDFF5E8),
-                            child: const Text(
-                              'A',
+                            child: Text(
+                              avatarLetter,
                               style: TextStyle(
                                 fontSize: 32,
                                 fontWeight: FontWeight.w800,
@@ -325,16 +361,6 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  'Albertino Villar',
-                                  style: TextStyle(
-                                    fontFamily: 'Georgia',
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w700,
-                                    color: MiPerfilPage._brand,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
                                 Row(
                                   children: [
                                     Icon(
@@ -347,7 +373,9 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
-                                        'tinovillar74@gmail.com',
+                                        displayEmail.isEmpty
+                                            ? 'Sin correo disponible'
+                                            : displayEmail,
                                         style: TextStyle(
                                           fontSize: 14,
                                           color: Colors.black.withValues(
@@ -370,7 +398,7 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                                     ),
                                     const SizedBox(width: 8),
                                     Text(
-                                      'Desde marzo 2026',
+                                      joinedText,
                                       style: TextStyle(
                                         fontSize: 14,
                                         color: Colors.black.withValues(
@@ -397,6 +425,33 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
                                         color: Colors.green.shade800,
                                       ),
                                     ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.star_rounded,
+                                      size: 18,
+                                      color: Color(0xFFFFB300),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _ratingSummary.average == null
+                                          ? 'Sin calificación'
+                                          : '${_ratingSummary.average!.toStringAsFixed(1)} (${_ratingSummary.count})',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.black.withValues(
+                                          alpha: 0.68,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_ratingSummary.average != null) ...[
+                                      const SizedBox(width: 8),
+                                      _ratingStars(_ratingSummary.average!),
+                                    ],
                                   ],
                                 ),
                               ],
@@ -597,6 +652,28 @@ class _MiPerfilPageState extends State<MiPerfilPage> {
   }
 }
 
+Widget _ratingStars(double rating) {
+  final safe = rating.clamp(0, 5).toDouble();
+  final full = safe.floor();
+  final hasHalf = (safe - full) >= 0.5;
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: List.generate(5, (i) {
+      if (i < full) {
+        return const Icon(Icons.star_rounded, size: 16, color: Color(0xFFFFB300));
+      }
+      if (i == full && hasHalf) {
+        return const Icon(
+          Icons.star_half_rounded,
+          size: 16,
+          color: Color(0xFFFFB300),
+        );
+      }
+      return const Icon(Icons.star_border_rounded, size: 16, color: Color(0xFFFFB300));
+    }),
+  );
+}
+
 Widget _chipGusto({
   required IconData icon,
   required String label,
@@ -620,6 +697,76 @@ Widget _chipGusto({
       ],
     ),
   );
+}
+
+Widget _chipGustoDesdeTexto(String label) {
+  final normalized = label.toLowerCase().trim();
+  if (normalized.contains('terror')) {
+    return _chipGusto(
+      icon: Icons.nightlight_round,
+      label: label,
+      bg: const Color(0xFFF3E8FF),
+    );
+  }
+  if (normalized.contains('fic')) {
+    return _chipGusto(
+      icon: Icons.rocket_launch_outlined,
+      label: label,
+      bg: const Color(0xFFE3F2FD),
+    );
+  }
+  if (normalized.contains('historia')) {
+    return _chipGusto(
+      icon: Icons.account_balance_outlined,
+      label: label,
+      bg: const Color(0xFFFBE9E7),
+    );
+  }
+  if (normalized.contains('arte')) {
+    return _chipGusto(
+      icon: Icons.palette_outlined,
+      label: label,
+      bg: const Color(0xFFFCE4EC),
+    );
+  }
+  if (normalized.contains('ciencia')) {
+    return _chipGusto(
+      icon: Icons.science_outlined,
+      label: label,
+      bg: const Color(0xFFE3F2FD),
+    );
+  }
+  if (normalized.contains('tecno')) {
+    return _chipGusto(
+      icon: Icons.computer_outlined,
+      label: label,
+      bg: const Color(0xFFE8F5E9),
+    );
+  }
+  return _chipGusto(
+    icon: Icons.menu_book_outlined,
+    label: label,
+    bg: const Color(0xFFF0F0F0),
+  );
+}
+
+String _formatMonthYearEs(DateTime d) {
+  const meses = <String>[
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre',
+  ];
+  final local = d.toLocal();
+  return '${meses[local.month - 1]} ${local.year}';
 }
 
 Widget _statMini({

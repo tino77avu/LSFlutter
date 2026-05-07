@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'calificar_donante_dialog.dart';
 import 'chat_donacion_page.dart';
+import 'compartir_libro_page.dart';
+import 'explore_book_detail_page.dart';
 
 /// Panel del usuario: resumen, actividad, pestañas y listas de libros.
 class MiPanelPage extends StatefulWidget {
@@ -30,6 +32,8 @@ class _MiPanelPageState extends State<MiPanelPage> {
   int _recibidas = 0;
   int _enviadas = 0;
   List<_LibroFila> _misLibros = const [];
+  List<_SolicitudRecibida> _solicitudesRecibidas = const [];
+  List<_SolicitudEnviada> _solicitudesEnviadas = const [];
 
   @override
   void initState() {
@@ -57,30 +61,53 @@ class _MiPanelPageState extends State<MiPanelPage> {
     try {
       final myBooksRows = await Supabase.instance.client
           .from('books')
-          .select('title,author,category,city,status')
+          .select('id,title,author,category,city,status,image_url,description')
           .eq('user_id', userId)
           .order('created_at', ascending: false);
 
       final myBooks = (myBooksRows as List<dynamic>).map((row) {
         final m = Map<String, dynamic>.from(row as Map);
+        final idRaw = m['id'];
         return _LibroFila(
+          id: idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0,
           titulo: (m['title'] ?? '').toString().trim(),
           autor: (m['author'] ?? '').toString().trim(),
           categoria: _emptyToNull((m['category'] ?? '').toString().trim()),
           ubicacion: (m['city'] ?? '').toString().trim(),
           status: (m['status'] ?? '').toString().trim(),
+          imageUrl: _emptyToNull((m['image_url'] ?? '').toString().trim()),
+          descripcion: _emptyToNull((m['description'] ?? '').toString().trim()),
         );
       }).toList();
 
       final receivedRows = await Supabase.instance.client
           .from('book_requests')
-          .select('status,books!inner(user_id)')
+          .select(
+            'id,requester_id,message,status,created_at,books!inner(id,user_id,title,status)',
+          )
           .eq('books.user_id', userId);
 
       final sentRows = await Supabase.instance.client
           .from('book_requests')
-          .select('status')
+          .select('id,status,message,created_at,books!inner(title,user_id)')
           .eq('requester_id', userId);
+
+      final profileIds = <String>{};
+      for (final row in (receivedRows as List<dynamic>)) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final book = Map<String, dynamic>.from(m['books'] as Map);
+        final requesterId = (m['requester_id'] ?? '').toString().trim();
+        final ownerId = (book['user_id'] ?? '').toString().trim();
+        if (requesterId.isNotEmpty) profileIds.add(requesterId);
+        if (ownerId.isNotEmpty) profileIds.add(ownerId);
+      }
+      for (final row in (sentRows as List<dynamic>)) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final book = Map<String, dynamic>.from(m['books'] as Map);
+        final ownerId = (book['user_id'] ?? '').toString().trim();
+        if (ownerId.isNotEmpty) profileIds.add(ownerId);
+      }
+      final profileNames = await _loadProfileNames(profileIds);
 
       final totalPublicados = myBooks.length;
       final disponibles = myBooks
@@ -88,6 +115,35 @@ class _MiPanelPageState extends State<MiPanelPage> {
           .length;
 
       final received = receivedRows as List<dynamic>;
+      final solicitudesRecibidas = received.map((r) {
+        final m = Map<String, dynamic>.from(r as Map);
+        final book = Map<String, dynamic>.from(m['books'] as Map);
+        final requesterId = (m['requester_id'] ?? '').toString().trim();
+        final idRaw = m['id'];
+        final id = idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0;
+        return _SolicitudRecibida(
+          id: id,
+          bookId: (book['id'] is int)
+              ? book['id'] as int
+              : int.tryParse('${book['id']}') ?? 0,
+          requesterId: requesterId,
+          requesterName: _resolveUserLabel(
+            userId: requesterId,
+            namesById: profileNames,
+          ),
+          status: (m['status'] ?? '').toString().trim(),
+          bookStatus: (book['status'] ?? '').toString().trim(),
+          mensaje: (m['message'] ?? '').toString().trim(),
+          libroTitulo: (book['title'] ?? 'Libro').toString().trim(),
+          createdAt:
+              DateTime.tryParse((m['created_at'] ?? '').toString())?.toLocal(),
+        );
+      }).toList()
+        ..sort((a, b) {
+          final aMs = a.createdAt?.millisecondsSinceEpoch ?? 0;
+          final bMs = b.createdAt?.millisecondsSinceEpoch ?? 0;
+          return bMs.compareTo(aMs);
+        });
       final porResponder = received.where((r) {
         final status = _normalizeText(
           (Map<String, dynamic>.from(r as Map))['status'].toString(),
@@ -102,6 +158,28 @@ class _MiPanelPageState extends State<MiPanelPage> {
       }).length;
 
       final sent = sentRows as List<dynamic>;
+      final solicitudesEnviadas = sent.map((r) {
+        final m = Map<String, dynamic>.from(r as Map);
+        final book = Map<String, dynamic>.from(m['books'] as Map);
+        final ownerId = (book['user_id'] ?? '').toString().trim();
+        final idRaw = m['id'];
+        final id = idRaw is int ? idRaw : int.tryParse('$idRaw') ?? 0;
+        return _SolicitudEnviada(
+          id: id,
+          libroTitulo: (book['title'] ?? 'Libro').toString().trim(),
+          ownerId: ownerId,
+          ownerName: _resolveUserLabel(userId: ownerId, namesById: profileNames),
+          mensaje: (m['message'] ?? '').toString().trim(),
+          status: (m['status'] ?? '').toString().trim(),
+          createdAt:
+              DateTime.tryParse((m['created_at'] ?? '').toString())?.toLocal(),
+        );
+      }).toList()
+        ..sort((a, b) {
+          final aMs = a.createdAt?.millisecondsSinceEpoch ?? 0;
+          final bMs = b.createdAt?.millisecondsSinceEpoch ?? 0;
+          return bMs.compareTo(aMs);
+        });
       final librosObtenidos = sent.where((r) {
         final status = _normalizeText(
           (Map<String, dynamic>.from(r as Map))['status'].toString(),
@@ -112,6 +190,8 @@ class _MiPanelPageState extends State<MiPanelPage> {
       if (!mounted) return;
       setState(() {
         _misLibros = myBooks;
+        _solicitudesRecibidas = solicitudesRecibidas;
+        _solicitudesEnviadas = solicitudesEnviadas;
         _totalPublicados = totalPublicados;
         _disponibles = disponibles;
         _porResponder = porResponder;
@@ -131,6 +211,50 @@ class _MiPanelPageState extends State<MiPanelPage> {
   }
 
   String _normalizeText(String value) => value.toLowerCase().trim();
+
+  Future<Map<String, String>> _loadProfileNames(Set<String> ids) async {
+    if (ids.isEmpty) return const {};
+    try {
+      final rows = await Supabase.instance.client
+          .from('profiles')
+          .select('id,full_name')
+          .inFilter('id', ids.toList());
+      final out = <String, String>{};
+      for (final row in rows as List<dynamic>) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final id = (m['id'] ?? '').toString().trim();
+        final fullName = (m['full_name'] ?? '').toString().trim();
+        if (id.isNotEmpty && fullName.isNotEmpty) out[id] = fullName;
+      }
+      return out;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  String _resolveUserLabel({
+    required String userId,
+    required Map<String, String> namesById,
+  }) {
+    final name = (namesById[userId] ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return _initialsFromName(userId, fallback: 'U');
+  }
+
+  String _initialsFromName(String text, {String fallback = 'U'}) {
+    final clean = text.trim();
+    if (clean.isEmpty) return fallback;
+    final parts = clean
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
+    }
+    final first = parts.first;
+    if (first.length >= 2) return first.substring(0, 2).toUpperCase();
+    return first.substring(0, 1).toUpperCase();
+  }
 
   String? _emptyToNull(String value) {
     if (value.trim().isEmpty) return null;
@@ -289,22 +413,29 @@ class _MiPanelPageState extends State<MiPanelPage> {
               LayoutBuilder(
                 builder: (context, c) {
                   final narrow = c.maxWidth < 720;
+                  final mainCard = _SummaryCard(
+                    icon: Icons.menu_book_outlined,
+                    iconBg: const Color(0xFFE8F5E9),
+                    iconColor: MiPanelPage._green,
+                    value: '$_disponibles',
+                    valueColor: MiPanelPage._green,
+                    label: 'Disponibles',
+                    sublabel: 'de $_totalPublicados publicados',
+                    emphasized: true,
+                  );
                   final cards = [
                     _SummaryCard(
-                      icon: Icons.menu_book_outlined,
-                      iconBg: const Color(0xFFE8F5E9),
-                      iconColor: MiPanelPage._green,
-                      value: '$_disponibles',
-                      valueColor: MiPanelPage._green,
-                      label: 'Disponibles',
-                      sublabel: 'de $_totalPublicados publicados',
-                    ),
-                    _SummaryCard(
                       icon: Icons.schedule_outlined,
-                      iconBg: const Color(0xFFF0F0F0),
-                      iconColor: const Color(0xFF616161),
+                      iconBg: _porResponder > 0
+                          ? const Color(0xFFFFF3E0)
+                          : const Color(0xFFF0F0F0),
+                      iconColor: _porResponder > 0
+                          ? const Color(0xFFE65100)
+                          : const Color(0xFF616161),
                       value: '$_porResponder',
-                      valueColor: const Color(0xFF424242),
+                      valueColor: _porResponder > 0
+                          ? const Color(0xFFE65100)
+                          : const Color(0xFF424242),
                       label: 'Por responder',
                       sublabel: 'solicitudes recibidas',
                     ),
@@ -328,28 +459,61 @@ class _MiPanelPageState extends State<MiPanelPage> {
                     ),
                   ];
                   if (narrow) {
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: cards
-                          .map(
-                            (w) => SizedBox(
-                              width: (c.maxWidth - 12) / 2,
-                              child: w,
-                            ),
-                          )
-                          .toList(),
+                    return Column(
+                      children: [
+                        SizedBox(width: double.infinity, child: mainCard),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: cards
+                              .map(
+                                (w) => SizedBox(
+                                  width: (c.maxWidth - 12) / 2,
+                                  child: w,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
                     );
                   }
-                  return Row(
+                  return Column(
                     children: [
-                      for (var i = 0; i < cards.length; i++) ...[
-                        if (i > 0) const SizedBox(width: 12),
-                        Expanded(child: cards[i]),
-                      ],
+                      SizedBox(width: double.infinity, child: mainCard),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          for (var i = 0; i < cards.length; i++) ...[
+                            if (i > 0) const SizedBox(width: 12),
+                            Expanded(child: cards[i]),
+                          ],
+                        ],
+                      ),
                     ],
                   );
                 },
+              ),
+              if (_porResponder > 0) ...[
+                const SizedBox(height: 12),
+                _attentionBanner(),
+              ],
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => abrirCompartirLibro(context),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: MiPanelPage._green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text('Publicar nuevo libro'),
+                ),
               ),
               const SizedBox(height: 22),
               _actividadReciente(),
@@ -425,30 +589,84 @@ class _MiPanelPageState extends State<MiPanelPage> {
                 ),
               )
             else if (_actividad.isEmpty)
-              Text(
-                'Sin actividad reciente por el momento.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.black.withValues(alpha: 0.5),
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Sin actividad reciente por el momento.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.black.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Publica un libro para empezar a recibir solicitudes.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.black.withValues(alpha: 0.58),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () => abrirCompartirLibro(context),
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: const Text('Publicar libro'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: MiPanelPage._green,
+                      side: const BorderSide(color: MiPanelPage._green),
+                    ),
+                  ),
+                ],
               )
             else
-              Column(
-                children: [
-                  for (var i = 0; i < _actividad.length; i++)
-                    _TimelineActivity(
-                      dotColor: _actividad[i].dotColor,
-                      icon: _actividad[i].icon,
-                      iconColor: _actividad[i].iconColor,
-                      title: _actividad[i].title,
-                      subtitle: _actividad[i].subtitle,
-                      time: _actividad[i].time,
-                      showLineBelow: i != _actividad.length - 1,
-                    ),
-                ],
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: Column(
+                  key: ValueKey<int>(_actividad.length),
+                  children: [
+                    for (var i = 0; i < _actividad.length; i++)
+                      _TimelineActivity(
+                        dotColor: _actividad[i].dotColor,
+                        icon: _actividad[i].icon,
+                        iconColor: _actividad[i].iconColor,
+                        title: _actividad[i].title,
+                        subtitle: _actividad[i].subtitle,
+                        time: _actividad[i].time,
+                        showLineBelow: i != _actividad.length - 1,
+                      ),
+                  ],
+                ),
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _attentionBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFCC80)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Tienes $_porResponder solicitud(es) pendientes por responder.',
+              style: const TextStyle(
+                color: Color(0xFFE65100),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -575,67 +793,448 @@ class _MiPanelPageState extends State<MiPanelPage> {
           ..._misLibros.map(
             (l) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: _LibroCard(libro: l),
+              child: _LibroCard(
+                libro: l,
+                onAction: (action) => _onLibroAction(libro: l, action: action),
+              ),
             ),
           ),
       ],
     );
   }
 
-  /// Solicitudes que otros usuarios te envían (diseño Recibidas).
-  Widget _recibidasLista() {
-    return const Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [_RecibidaSolicitudCard()],
-    );
+  Future<void> _onLibroAction({
+    required _LibroFila libro,
+    required String action,
+  }) async {
+    switch (action) {
+      case 'ver':
+        if (!mounted) return;
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ExploreBookDetailPage(bookId: libro.id),
+          ),
+        );
+        return;
+      case 'editar':
+        await _editarLibro(libro);
+        return;
+      case 'eliminar':
+        await _eliminarLibro(libro);
+        return;
+      default:
+        return;
+    }
   }
 
-  /// Solicitudes enviadas / libros obtenidos (diseño Enviadas).
-  Widget _enviadasLista() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              radius: 26,
-              backgroundColor: const Color(0xFFE8F5E9),
-              child: Icon(
-                Icons.menu_book_rounded,
-                color: MiPanelPage._green,
-                size: 28,
-              ),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
+  Future<void> _editarLibro(_LibroFila libro) async {
+    final tituloCtrl = TextEditingController(text: libro.titulo);
+    final autorCtrl = TextEditingController(text: libro.autor);
+    final ciudadCtrl = TextEditingController(text: libro.ubicacion);
+    final descCtrl = TextEditingController(text: libro.descripcion ?? '');
+    final formKey = GlobalKey<FormState>();
+
+    final payload = await showDialog<Map<String, String?>>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Editar libro'),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'Libros que has obtenido',
-                    style: TextStyle(
-                      fontFamily: 'Georgia',
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1A1A1A),
-                    ),
+                  TextFormField(
+                    controller: tituloCtrl,
+                    decoration: const InputDecoration(labelText: 'Título *'),
+                    validator: (v) =>
+                        (v ?? '').trim().isEmpty ? 'Ingresa el título.' : null,
                   ),
-                  SizedBox(height: 4),
-                  Text(
-                    '1 libro recibido',
-                    style: TextStyle(fontSize: 14, color: Color(0xFF757575)),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: autorCtrl,
+                    decoration: const InputDecoration(labelText: 'Autor *'),
+                    validator: (v) =>
+                        (v ?? '').trim().isEmpty ? 'Ingresa el autor.' : null,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: ciudadCtrl,
+                    decoration: const InputDecoration(labelText: 'Ciudad *'),
+                    validator: (v) =>
+                        (v ?? '').trim().isEmpty ? 'Ingresa la ciudad.' : null,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: descCtrl,
+                    maxLines: 3,
+                    decoration: const InputDecoration(labelText: 'Descripción'),
                   ),
                 ],
               ),
             ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.of(dialogContext).pop({
+                  'title': tituloCtrl.text.trim(),
+                  'author': autorCtrl.text.trim(),
+                  'city': ciudadCtrl.text.trim(),
+                  'description': descCtrl.text.trim().isEmpty
+                      ? null
+                      : descCtrl.text.trim(),
+                });
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    tituloCtrl.dispose();
+    autorCtrl.dispose();
+    ciudadCtrl.dispose();
+    descCtrl.dispose();
+
+    if (payload != null) {
+      try {
+        await Supabase.instance.client
+            .from('books')
+            .update({
+              'title': payload['title'],
+              'author': payload['author'],
+              'city': payload['city'],
+              'description': payload['description'],
+              'updated_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .eq('id', libro.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Libro actualizado.')));
+        await _loadPanelData();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
+    }
+  }
+
+  Future<void> _eliminarLibro(_LibroFila libro) async {
+    final confirmCtrl = TextEditingController();
+    final typed = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Eliminar libro'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Escribe ELIMINAR para confirmar: ${libro.titulo}'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmCtrl,
+                  decoration: const InputDecoration(hintText: 'ELIMINAR'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(confirmCtrl.text.trim());
+              },
+              child: const Text('Eliminar'),
+            ),
+          ],
+        );
+      },
+    );
+    confirmCtrl.dispose();
+    if (typed == null) return;
+    if (typed.toUpperCase() != 'ELIMINAR') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Debes escribir ELIMINAR para confirmar.')),
+      );
+      return;
+    }
+
+    try {
+      final activeRequests = await Supabase.instance.client
+          .from('book_requests')
+          .select('id')
+          .eq('book_id', libro.id)
+          .inFilter('status', ['pendiente', 'aceptada']);
+      if ((activeRequests as List).isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No puedes eliminar este libro porque tiene solicitudes activas.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      await Supabase.instance.client.from('books').delete().eq('id', libro.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Libro eliminado.')));
+      await _loadPanelData();
+      await _loadActividadReciente();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  /// Solicitudes que otros usuarios te envían (diseño Recibidas).
+  Widget _recibidasLista() {
+    if (_loadingPanelData) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_errorPanelData != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'No se pudieron cargar las solicitudes recibidas.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _errorPanelData!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _loadPanelData, child: const Text('Reintentar')),
           ],
         ),
-        const SizedBox(height: 18),
-        const _EnviadaSolicitudCard(),
-      ],
+      );
+    }
+
+    if (_solicitudesRecibidas.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Text(
+          'Aún no tienes solicitudes recibidas.',
+          style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: _solicitudesRecibidas
+          .map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _RecibidaSolicitudCard(
+                solicitud: s,
+                onUpdateStatus: _updateSolicitudStatus,
+              ),
+            ),
+          )
+          .toList(),
     );
   }
+
+  Future<void> _updateSolicitudStatus({
+    required int requestId,
+    required int bookId,
+    required String newStatus,
+  }) async {
+    try {
+      await Supabase.instance.client
+          .from('book_requests')
+          .update({
+            'status': newStatus,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', requestId);
+
+      if (newStatus == 'aceptada') {
+        await Supabase.instance.client
+            .from('books')
+            .update({
+              'status': 'donandose',
+              'updated_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .eq('id', bookId);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Solicitud ${_capitalize(newStatus)}.')),
+      );
+      await _loadPanelData();
+      await _loadActividadReciente();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.toString().replaceFirst('Exception: ', ''),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Solicitudes enviadas / libros obtenidos (diseño Enviadas).
+  Widget _enviadasLista() {
+    if (_loadingPanelData) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_errorPanelData != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'No se pudieron cargar las solicitudes enviadas.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _errorPanelData!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _loadPanelData, child: const Text('Reintentar')),
+          ],
+        ),
+      );
+    }
+
+    if (_solicitudesEnviadas.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Text(
+          'Aún no has enviado solicitudes.',
+          style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: _solicitudesEnviadas
+          .map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _EnviadaSolicitudCard(solicitud: s),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class _SolicitudRecibida {
+  const _SolicitudRecibida({
+    required this.id,
+    required this.bookId,
+    required this.requesterId,
+    required this.requesterName,
+    required this.status,
+    required this.bookStatus,
+    required this.mensaje,
+    required this.libroTitulo,
+    required this.createdAt,
+  });
+
+  final int id;
+  final int bookId;
+  final String requesterId;
+  final String requesterName;
+  final String status;
+  final String bookStatus;
+  final String mensaje;
+  final String libroTitulo;
+  final DateTime? createdAt;
+}
+
+class _SolicitudEnviada {
+  const _SolicitudEnviada({
+    required this.id,
+    required this.libroTitulo,
+    required this.ownerId,
+    required this.ownerName,
+    required this.mensaje,
+    required this.status,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String libroTitulo;
+  final String ownerId;
+  final String ownerName;
+  final String mensaje;
+  final String status;
+  final DateTime? createdAt;
 }
 
 class _SummaryCard extends StatelessWidget {
@@ -647,6 +1246,7 @@ class _SummaryCard extends StatelessWidget {
     required this.valueColor,
     required this.label,
     required this.sublabel,
+    this.emphasized = false,
   });
 
   final IconData icon;
@@ -656,16 +1256,17 @@ class _SummaryCard extends StatelessWidget {
   final Color valueColor;
   final String label;
   final String sublabel;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: MiPanelPage._bgCard,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 1,
+      borderRadius: BorderRadius.circular(emphasized ? 18 : 16),
+      elevation: emphasized ? 2 : 1,
       shadowColor: Colors.black12,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(emphasized ? 18 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -675,10 +1276,10 @@ class _SummaryCard extends StatelessWidget {
               child: Icon(icon, color: iconColor, size: 22),
             ),
             const SizedBox(height: 12),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 28,
+            _AnimatedCounterLabel(
+              value: int.tryParse(value.trim()) ?? 0,
+              textStyle: TextStyle(
+                fontSize: emphasized ? 34 : 28,
                 fontWeight: FontWeight.w800,
                 color: valueColor,
                 height: 1,
@@ -815,13 +1416,90 @@ class _TimelineActivity extends StatelessWidget {
 
 /// Tarjeta de solicitud recibida (estado aceptada + mensaje + acciones).
 class _RecibidaSolicitudCard extends StatelessWidget {
-  const _RecibidaSolicitudCard();
+  const _RecibidaSolicitudCard({
+    required this.solicitud,
+    required this.onUpdateStatus,
+  });
 
   static const Color _primary = Color(0xFF008f68);
   static const Color _statusBg = Color(0xFFeffaf5);
   static const Color _statusFg = Color(0xFF2d8a64);
+  static const Color _statusPendingBg = Color(0xFFFFF8E1);
+  static const Color _statusPendingFg = Color(0xFFE65100);
+  static const Color _statusRejectedBg = Color(0xFFFFEBEE);
+  static const Color _statusRejectedFg = Color(0xFFC62828);
   static const Color _msgBg = Color(0xFFF5F0EA);
-  static const Color _btnSecondary = Color(0xFFEDEAE4);
+  final _SolicitudRecibida solicitud;
+  final Future<void> Function({
+    required int requestId,
+    required int bookId,
+    required String newStatus,
+  })
+  onUpdateStatus;
+
+  String get _status => solicitud.status.toLowerCase().trim();
+  String get _bookStatus => solicitud.bookStatus.toLowerCase().trim();
+
+  Color get _chipBg {
+    switch (_status) {
+      case 'pendiente':
+        return _statusPendingBg;
+      case 'rechazada':
+        return _statusRejectedBg;
+      default:
+        return _statusBg;
+    }
+  }
+
+  Color get _chipFg {
+    switch (_status) {
+      case 'pendiente':
+        return _statusPendingFg;
+      case 'rechazada':
+        return _statusRejectedFg;
+      default:
+        return _statusFg;
+    }
+  }
+
+  IconData get _chipIcon {
+    switch (_status) {
+      case 'pendiente':
+        return Icons.schedule_outlined;
+      case 'rechazada':
+        return Icons.cancel_outlined;
+      default:
+        return Icons.check_circle_outline;
+    }
+  }
+
+  String get _statusLabel {
+    if (_status.isEmpty) return 'Pendiente';
+    return _status[0].toUpperCase() + _status.substring(1);
+  }
+
+  String get _fechaLabel {
+    final d = solicitud.createdAt;
+    if (d == null) return 'Fecha no disponible';
+    const meses = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre',
+    ];
+    final mes = meses[(d.month - 1).clamp(0, 11)];
+    final hh = d.hour.toString().padLeft(2, '0');
+    final mm = d.minute.toString().padLeft(2, '0');
+    return '${d.day} de $mes · $hh:$mm';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -852,8 +1530,8 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Ciudad y Los Perros',
+                      Text(
+                        solicitud.libroTitulo,
                         style: TextStyle(
                           fontFamily: 'Georgia',
                           fontSize: 22,
@@ -872,7 +1550,7 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            'n00325473',
+                            solicitud.requesterName,
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.black.withValues(alpha: 0.5),
@@ -882,7 +1560,7 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '28 de marzo · 22:07',
+                        _fechaLabel,
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.black.withValues(alpha: 0.42),
@@ -898,27 +1576,27 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: _statusBg,
+                    color: _chipBg,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: _statusFg.withValues(alpha: 0.35),
+                      color: _chipFg.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
+                    children: [
                       Icon(
-                        Icons.check_circle_outline,
+                        _chipIcon,
                         size: 17,
-                        color: _statusFg,
+                        color: _chipFg,
                       ),
-                      SizedBox(width: 5),
+                      const SizedBox(width: 5),
                       Text(
-                        'Aceptada',
+                        _statusLabel,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: _statusFg,
+                          color: _chipFg,
                         ),
                       ),
                     ],
@@ -945,7 +1623,9 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Dóname we',
+                      solicitud.mensaje.isEmpty
+                          ? 'Sin mensaje del solicitante.'
+                          : solicitud.mensaje,
                       style: TextStyle(
                         fontSize: 14,
                         height: 1.45,
@@ -956,81 +1636,120 @@ class _RecibidaSolicitudCard extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              decoration: BoxDecoration(
-                color: _statusBg,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            if (_status == 'pendiente') ...[
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
                 children: [
-                  const Icon(
-                    Icons.check_box_rounded,
-                    color: _statusFg,
-                    size: 22,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Solicitud aceptada · Coordina la entrega con n00325473.',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.45,
-                        color: _statusFg,
-                        fontWeight: FontWeight.w600,
+                  FilledButton.icon(
+                    onPressed: () => onUpdateStatus(
+                      requestId: solicitud.id,
+                      bookId: solicitud.bookId,
+                      newStatus: 'aceptada',
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
+                    icon: const Icon(Icons.check_circle_outline, size: 20),
+                    label: const Text('Aceptar solicitud'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => onUpdateStatus(
+                      requestId: solicitud.id,
+                      bookId: solicitud.bookId,
+                      newStatus: 'rechazada',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF333333),
+                      side: BorderSide(color: Colors.grey.shade300),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.cancel_outlined, size: 20),
+                    label: const Text('Rechazar'),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () => abrirChatDonacion(
-                    context,
-                    otroUsuario: 'n00325473',
-                    tituloLibro: 'Ciudad y Los Perros',
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: _btnSecondary,
-                    foregroundColor: const Color(0xFF333333),
-                    side: BorderSide(color: Colors.grey.shade300),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.chat_bubble_outline, size: 20),
-                  label: const Text('Abrir chat'),
+            ] else if (_status == 'aceptada') ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _statusBg,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                FilledButton.icon(
-                  onPressed: () {},
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.check_box_rounded,
+                      color: _statusFg,
+                      size: 22,
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Solicitud aceptada · Coordina la entrega con ${solicitud.requesterName}.',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.45,
+                          color: _statusFg,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                  icon: const Icon(Icons.check_circle_outline, size: 20),
-                  label: const Text('Confirmar entrega'),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _statusBg,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      color: _statusFg,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        (_bookStatus == 'entregado' || _bookStatus.contains('donad'))
+                            ? 'Este libro ya fue donado/entregado.'
+                            : 'Este libro está en proceso de donación.',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.45,
+                          color: _statusFg,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1040,11 +1759,80 @@ class _RecibidaSolicitudCard extends StatelessWidget {
 
 /// Tarjeta de solicitud enviada aceptada (libro obtenido).
 class _EnviadaSolicitudCard extends StatelessWidget {
-  const _EnviadaSolicitudCard();
+  const _EnviadaSolicitudCard({required this.solicitud});
 
   static const Color _statusBg = Color(0xFFeffaf5);
   static const Color _statusFg = Color(0xFF2d8a64);
   static const Color _orange = Color(0xFFE65100);
+  static const Color _statusPendingBg = Color(0xFFFFF8E1);
+  static const Color _statusPendingFg = Color(0xFFE65100);
+  static const Color _statusRejectedBg = Color(0xFFFFEBEE);
+  static const Color _statusRejectedFg = Color(0xFFC62828);
+  final _SolicitudEnviada solicitud;
+
+  String get _status => solicitud.status.toLowerCase().trim();
+
+  Color get _chipBg {
+    switch (_status) {
+      case 'pendiente':
+        return _statusPendingBg;
+      case 'rechazada':
+        return _statusRejectedBg;
+      default:
+        return _statusBg;
+    }
+  }
+
+  Color get _chipFg {
+    switch (_status) {
+      case 'pendiente':
+        return _statusPendingFg;
+      case 'rechazada':
+        return _statusRejectedFg;
+      default:
+        return _statusFg;
+    }
+  }
+
+  IconData get _chipIcon {
+    switch (_status) {
+      case 'pendiente':
+        return Icons.schedule_outlined;
+      case 'rechazada':
+        return Icons.cancel_outlined;
+      default:
+        return Icons.check_circle_outline;
+    }
+  }
+
+  String get _statusLabel {
+    if (_status.isEmpty) return 'Pendiente';
+    return _status[0].toUpperCase() + _status.substring(1);
+  }
+
+  String get _fechaLabel {
+    final d = solicitud.createdAt;
+    if (d == null) return 'Fecha no disponible';
+    return 'Solicitado el ${d.day} de ${_mes(d.month)}, ${d.year}';
+  }
+
+  String _mes(int month) {
+    const meses = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre',
+    ];
+    return meses[(month - 1).clamp(0, 11)];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1067,7 +1855,7 @@ class _EnviadaSolicitudCard extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          'Empanaditas',
+                          solicitud.libroTitulo,
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w800,
@@ -1094,27 +1882,27 @@ class _EnviadaSolicitudCard extends StatelessWidget {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: _statusBg,
+                    color: _chipBg,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: _statusFg.withValues(alpha: 0.35),
+                      color: _chipFg.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
+                    children: [
                       Icon(
-                        Icons.check_circle_outline,
+                        _chipIcon,
                         size: 17,
-                        color: _statusFg,
+                        color: _chipFg,
                       ),
-                      SizedBox(width: 5),
+                      const SizedBox(width: 5),
                       Text(
-                        'Aceptada',
+                        _statusLabel,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: _statusFg,
+                          color: _chipFg,
                         ),
                       ),
                     ],
@@ -1124,7 +1912,7 @@ class _EnviadaSolicitudCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Solicitado el 28 de marzo, 2026',
+              _fechaLabel,
               style: TextStyle(
                 fontSize: 13,
                 color: Colors.black.withValues(alpha: 0.48),
@@ -1132,7 +1920,7 @@ class _EnviadaSolicitudCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              '«Hola, prestame tu libro pana»',
+              '«${solicitud.mensaje.isEmpty ? 'Sin mensaje' : solicitud.mensaje}»',
               style: TextStyle(
                 fontSize: 14,
                 fontStyle: FontStyle.italic,
@@ -1140,99 +1928,105 @@ class _EnviadaSolicitudCard extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.65),
               ),
             ),
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _statusBg,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.celebration, color: _statusFg, size: 22),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          '¡Tu solicitud fue aceptada!',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: _statusFg,
+            if (_status == 'aceptada') ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: _statusBg,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.celebration, color: _statusFg, size: 22),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            '¡Tu solicitud fue aceptada!',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: _statusFg,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Contacta al donante para coordinar la entrega del libro.',
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.45,
-                      color: Colors.black.withValues(alpha: 0.55),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => abrirChatDonacion(
-                        context,
-                        otroUsuario: 'Donante',
-                        tituloLibro: 'Empanaditas',
+                    const SizedBox(height: 8),
+                    Text(
+                      'Contacta al donante para coordinar la entrega del libro.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.45,
+                        color: Colors.black.withValues(alpha: 0.55),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFF333333),
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => abrirChatDonacion(
+                          context,
+                          requestId: solicitud.id,
+                          otroUsuarioId: solicitud.ownerId,
+                          otroUsuarioNombre: solicitud.ownerName.isEmpty
+                              ? 'Donante'
+                              : solicitud.ownerName,
+                          tituloLibro: solicitud.libroTitulo,
                         ),
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF333333),
+                          side: BorderSide(color: Colors.grey.shade300),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                        label: const Text('Chat'),
                       ),
-                      icon: const Icon(Icons.chat_bubble_outline, size: 20),
-                      label: const Text('Abrir chat'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    final ok = await mostrarCalificarDonante(
+                      context,
+                      tituloLibro: solicitud.libroTitulo,
+                    );
+                    if (!context.mounted) return;
+                    if (ok == true) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Gracias por tu reseña.')),
+                      );
+                    }
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _orange,
+                    side: const BorderSide(color: _orange, width: 1.2),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final ok = await mostrarCalificarDonante(
-                    context,
-                    tituloLibro: 'Empanaditas',
-                  );
-                  if (!context.mounted) return;
-                  if (ok == true) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Gracias por tu reseña.')),
-                    );
-                  }
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _orange,
-                  side: const BorderSide(color: _orange, width: 1.2),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                  icon: const Icon(Icons.star_border, size: 22, color: _orange),
+                  label: const Text(
+                    'Calificar al donante',
+                    style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
-                icon: const Icon(Icons.star_border, size: 22, color: _orange),
-                label: const Text(
-                  'Calificar al donante',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -1257,11 +2051,22 @@ class _SegTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? Colors.white : Colors.transparent,
-      elevation: selected ? 2 : 0,
-      shadowColor: Colors.black26,
-      borderRadius: BorderRadius.circular(22),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        color: selected ? const Color(0xFFE8F5E9) : const Color(0xFFE3E3E3),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: selected
+            ? const [
+                BoxShadow(
+                  color: Color(0x16000000),
+                  blurRadius: 8,
+                  offset: Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(22),
@@ -1318,24 +2123,31 @@ class _SegTab extends StatelessWidget {
 
 class _LibroFila {
   const _LibroFila({
+    required this.id,
     required this.titulo,
     required this.autor,
     required this.ubicacion,
     required this.status,
     this.categoria,
+    this.imageUrl,
+    this.descripcion,
   });
 
+  final int id;
   final String titulo;
   final String autor;
   final String? categoria;
   final String ubicacion;
   final String status;
+  final String? imageUrl;
+  final String? descripcion;
 }
 
 class _LibroCard extends StatelessWidget {
-  const _LibroCard({required this.libro});
+  const _LibroCard({required this.libro, required this.onAction});
 
   final _LibroFila libro;
+  final ValueChanged<String> onAction;
 
   String get _statusLabel {
     final s = libro.status.trim();
@@ -1346,6 +2158,35 @@ class _LibroCard extends StatelessWidget {
   bool get _statusIsAvailable =>
       libro.status.toLowerCase().trim() == 'disponible';
 
+  Widget _miniaturaLibro() {
+    final imageUrl = libro.imageUrl;
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return Image.network(
+        imageUrl,
+        width: 52,
+        height: 76,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _miniaturaFallback(),
+      );
+    }
+    return _miniaturaFallback();
+  }
+
+  Widget _miniaturaFallback() {
+    return Container(
+      width: 52,
+      height: 76,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF4A6741), Color(0xFF2E4A32)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Icon(Icons.menu_book, color: Colors.white24, size: 28),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -1353,152 +2194,180 @@ class _LibroCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       elevation: 1,
       shadowColor: Colors.black12,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: 52,
-                height: 76,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF4A6741), Color(0xFF2E4A32)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.menu_book,
-                  color: Colors.white24,
-                  size: 28,
-                ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => onAction('ver'),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: _miniaturaLibro(),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          libro.titulo,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                            height: 1.25,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            libro.titulo,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              height: 1.25,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
                             color: _statusIsAvailable
-                                ? const Color(0xFF2E7D32)
-                                : const Color(0xFF757575),
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.circle,
-                              size: 7,
+                                ? const Color(0xFFE8F5E9)
+                                : const Color(0xFFF1F1F1),
+                            border: Border.all(
                               color: _statusIsAvailable
                                   ? const Color(0xFF2E7D32)
                                   : const Color(0xFF757575),
                             ),
-                            SizedBox(width: 5),
-                            Text(
-                              _statusLabel,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _statusIsAvailable
+                                    ? Icons.check_circle
+                                    : Icons.info_outline,
+                                size: 12,
                                 color: _statusIsAvailable
                                     ? const Color(0xFF2E7D32)
                                     : const Color(0xFF757575),
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 5),
+                              Text(
+                                _statusLabel,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: _statusIsAvailable
+                                      ? const Color(0xFF2E7D32)
+                                      : const Color(0xFF757575),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    libro.autor,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.black.withValues(alpha: 0.5),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      if (libro.categoria != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      libro.autor,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.black.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (libro.categoria != null) ...[
+                          Icon(
+                            Icons.label_outline,
+                            size: 15,
+                            color: Colors.black.withValues(alpha: 0.4),
+                          ),
+                          Text(
+                            libro.categoria!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.black.withValues(alpha: 0.45),
+                            ),
+                          ),
+                        ],
                         Icon(
-                          Icons.label_outline,
+                          Icons.place_outlined,
                           size: 15,
                           color: Colors.black.withValues(alpha: 0.4),
                         ),
                         Text(
-                          libro.categoria!,
+                          libro.ubicacion,
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.black.withValues(alpha: 0.45),
                           ),
                         ),
                       ],
-                      Icon(
-                        Icons.place_outlined,
-                        size: 15,
-                        color: Colors.black.withValues(alpha: 0.4),
-                      ),
-                      Text(
-                        libro.ubicacion,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.black.withValues(alpha: 0.45),
-                        ),
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Acciones',
+                icon: const Icon(Icons.more_vert),
+                onSelected: onAction,
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'ver',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.visibility_outlined),
+                      title: Text('Ver'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'editar',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Editar'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'eliminar',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('Eliminar'),
+                    ),
                   ),
                 ],
               ),
-            ),
-            Column(
-              children: [
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.visibility_outlined, size: 20),
-                ),
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                ),
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _AnimatedCounterLabel extends StatelessWidget {
+  const _AnimatedCounterLabel({required this.value, required this.textStyle});
+
+  final int value;
+  final TextStyle textStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: value.toDouble()),
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeOutCubic,
+      builder: (context, animated, _) {
+        return Text(animated.toInt().toString(), style: textStyle);
+      },
     );
   }
 }

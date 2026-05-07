@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_top_bar.dart';
+import 'profile_service.dart';
 
 /// Edición de categorías favoritas y nota libre (Ver y modificar en Mi perfil).
 class MisGustosLecturaPage extends StatefulWidget {
@@ -34,12 +35,16 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
 
   late final Set<String> _seleccion;
   late final TextEditingController _nota;
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _seleccion = {'Terror', 'Ficción'};
-    _nota = TextEditingController(text: 'Me gustan las novelas de terror y ficcion');
+    _seleccion = <String>{};
+    _nota = TextEditingController();
+    _loadPreferences();
   }
 
   @override
@@ -56,6 +61,52 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
         _seleccion.add(id);
       }
     });
+  }
+
+  Future<void> _loadPreferences() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final prefs = await ProfileService.instance.getMyReadingPreferences();
+      if (!mounted) return;
+      setState(() {
+        _seleccion
+          ..clear()
+          ..addAll(prefs.categories);
+        _nota.text = prefs.freeText;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _savePreferences() async {
+    setState(() => _saving = true);
+    try {
+      await ProfileService.instance.saveMyReadingPreferences(
+        categories: _seleccion.toList(),
+        freeText: _nota.text,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gustos guardados correctamente.')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -88,7 +139,10 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
                 const SizedBox(height: 8),
                 Text(
                   'Resumen de tu actividad en LibroSolidario',
-                  style: TextStyle(fontSize: 15, color: Colors.black.withValues(alpha: 0.52)),
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.black.withValues(alpha: 0.52),
+                  ),
                 ),
                 const SizedBox(height: 24),
                 Container(
@@ -97,32 +151,78 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: const Color(0xFFE0E0E0)),
-                    boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2))],
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x08000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.auto_awesome, color: MisGustosLecturaPage._brand, size: 22),
+                          Icon(
+                            Icons.auto_awesome,
+                            color: MisGustosLecturaPage._brand,
+                            size: 22,
+                          ),
                           const SizedBox(width: 8),
                           const Text(
                             'Mis gustos de lectura',
-                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17, color: Color(0xFF1A1A1A)),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17,
+                              color: Color(0xFF1A1A1A),
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 14),
                       Text(
                         'Selecciona las categorías que más te interesan:',
-                        style: TextStyle(fontSize: 14, color: Colors.black.withValues(alpha: 0.58)),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.black.withValues(alpha: 0.58),
+                        ),
                       ),
                       const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _todas.map((c) => _chipCategoria(c)).toList(),
-                      ),
+                      if (_loading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else ...[
+                        if (_error != null) ...[
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text(
+                              _error!,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              onPressed: _loadPreferences,
+                              child: const Text('Reintentar'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _todas
+                              .map((c) => _chipCategoria(c))
+                              .toList(),
+                        ),
+                      ],
                       const SizedBox(height: 22),
                       Text(
                         '¿Qué tipo de libros buscas? (opcional)',
@@ -142,14 +242,21 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
                           filled: true,
                           fillColor: const Color(0xFFFAFAFA),
                           hintText: 'Cuéntanos qué buscas leer…',
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Color(0xFFD0D0D0)),
+                            borderSide: const BorderSide(
+                              color: Color(0xFFD0D0D0),
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: MisGustosLecturaPage._brand, width: 1.4),
+                            borderSide: const BorderSide(
+                              color: MisGustosLecturaPage._brand,
+                              width: 1.4,
+                            ),
                           ),
                           counterText: '',
                         ),
@@ -158,7 +265,10 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
                         alignment: Alignment.centerRight,
                         child: Text(
                           '${_nota.text.length}/400',
-                          style: TextStyle(fontSize: 12, color: Colors.black.withValues(alpha: 0.45)),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.black.withValues(alpha: 0.45),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -168,20 +278,36 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           FilledButton.icon(
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Gustos guardados (demo)')),
-                              );
-                              Navigator.of(context).pop();
-                            },
+                            onPressed: _loading || _saving
+                                ? null
+                                : _savePreferences,
                             style: FilledButton.styleFrom(
                               backgroundColor: MisGustosLecturaPage._brand,
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
-                            icon: const Icon(Icons.check, size: 20),
-                            label: const Text('Guardar gustos', style: TextStyle(fontWeight: FontWeight.w700)),
+                            icon: _saving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.check, size: 20),
+                            label: Text(
+                              _saving ? 'Guardando...' : 'Guardar gustos',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                           TextButton(
                             onPressed: () => Navigator.of(context).pop(),
@@ -220,13 +346,21 @@ class _MisGustosLecturaPageState extends State<MisGustosLecturaPage> {
           Text(c.nombre),
           if (sel) ...[
             const SizedBox(width: 4),
-            const Icon(Icons.check, size: 16, color: MisGustosLecturaPage._brand),
+            const Icon(
+              Icons.check,
+              size: 16,
+              color: MisGustosLecturaPage._brand,
+            ),
           ],
         ],
       ),
       selectedColor: const Color(0xFFE8F5EC),
       backgroundColor: const Color(0xFFF0F0F0),
-      side: BorderSide(color: sel ? MisGustosLecturaPage._brand.withValues(alpha: 0.45) : const Color(0xFFE0E0E0)),
+      side: BorderSide(
+        color: sel
+            ? MisGustosLecturaPage._brand.withValues(alpha: 0.45)
+            : const Color(0xFFE0E0E0),
+      ),
       labelStyle: TextStyle(
         color: sel ? MisGustosLecturaPage._brand : const Color(0xFF444444),
         fontWeight: sel ? FontWeight.w700 : FontWeight.w500,

@@ -80,47 +80,17 @@ class AppTopBar extends StatelessWidget {
                 dest: AppDestination.miPanel,
               ),
               const Spacer(),
-              FilledButton.icon(
-                onPressed: () => abrirCompartirLibro(context),
-                style: FilledButton.styleFrom(
-                  backgroundColor: brandGreen,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                icon: const Icon(Icons.add, size: 20),
-                label: const Text('Compartir un libro'),
-              ),
-              const SizedBox(width: 8),
-              _iconBarAcciones(
-                onOpenRecomendaciones: onOpenRecomendaciones,
-                compact: false,
-              ),
-              InkWell(
-                customBorder: const CircleBorder(),
-                onTap: onOpenProfile,
-                child: const CircleAvatar(
-                  radius: 18,
-                  backgroundColor: Color(0xFFE0E0E0),
-                  child: Text(
-                    'A',
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+              IconButton(
+                tooltip: 'Notificaciones',
+                onPressed: () {},
+                icon: const Icon(Icons.notifications_outlined),
               ),
               IconButton(
-                tooltip: 'Cerrar sesión',
-                onPressed: onLogout,
-                icon: const Icon(Icons.logout),
+                tooltip: 'Favoritos',
+                onPressed: onOpenFavorites,
+                icon: const Icon(Icons.favorite_border),
               ),
+              _menuMovil(context, compact: false),
             ],
           ),
         ),
@@ -141,9 +111,17 @@ class AppTopBar extends StatelessWidget {
               titleEllipsis: true,
             ),
           ),
-          _iconBarAcciones(
-            onOpenRecomendaciones: onOpenRecomendaciones,
-            compact: true,
+          IconButton(
+            style: _iconButtonStyleCompact(),
+            tooltip: 'Notificaciones',
+            onPressed: () {},
+            icon: const Icon(Icons.notifications_outlined, size: 22),
+          ),
+          IconButton(
+            style: _iconButtonStyleCompact(),
+            tooltip: 'Favoritos',
+            onPressed: onOpenFavorites,
+            icon: const Icon(Icons.favorite_border, size: 22),
           ),
           _menuMovil(context, compact: true),
         ],

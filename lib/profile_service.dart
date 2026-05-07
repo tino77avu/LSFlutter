@@ -40,6 +40,27 @@ class UserProfile {
   }
 }
 
+class ReadingPreferences {
+  const ReadingPreferences({
+    required this.categories,
+    required this.freeText,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final List<String> categories;
+  final String freeText;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+}
+
+class RatingSummary {
+  const RatingSummary({required this.average, required this.count});
+
+  final double? average;
+  final int count;
+}
+
 class ProfileService {
   ProfileService._();
 
@@ -54,7 +75,9 @@ class ProfileService {
     final session = Supabase.instance.client.auth.currentSession;
 
     if (authUser == null) {
-      debugPrint('[ProfileService] ABORT: currentUser == null (no hay sesión JWT para PostgREST)');
+      debugPrint(
+        '[ProfileService] ABORT: currentUser == null (no hay sesión JWT para PostgREST)',
+      );
       throw Exception('No hay usuario autenticado para crear el perfil.');
     }
 
@@ -67,7 +90,19 @@ class ProfileService {
     );
 
     try {
-      debugPrint('[ProfileService] INSERT public.profiles id=$userId email=$userEmail');
+      final existing = await _client
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+      if (existing != null) {
+        debugPrint('[ProfileService] perfil existente, no se inserta');
+        return;
+      }
+
+      debugPrint(
+        '[ProfileService] INSERT public.profiles id=$userId email=$userEmail',
+      );
       await _client.from('profiles').insert({
         'id': userId,
         'email': userEmail,
@@ -126,8 +161,12 @@ class ProfileService {
 
     final updates = <String, dynamic>{};
     if (fullName != null) updates['full_name'] = fullName.trim();
-    if (city != null) updates['city'] = city.trim().isEmpty ? null : city.trim();
-    if (phone != null) updates['phone'] = phone.trim().isEmpty ? null : phone.trim();
+    if (city != null) {
+      updates['city'] = city.trim().isEmpty ? null : city.trim();
+    }
+    if (phone != null) {
+      updates['phone'] = phone.trim().isEmpty ? null : phone.trim();
+    }
     if (email != null) updates['email'] = email.trim();
 
     if (updates.isEmpty) return;
@@ -140,5 +179,132 @@ class ProfileService {
     } catch (e) {
       throw Exception('Error al actualizar tu perfil: $e');
     }
+  }
+
+  Future<ReadingPreferences> getMyReadingPreferences() async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('No hay sesión activa.');
+    }
+
+    try {
+      final rows = await _client
+          .from('reading_preferences')
+          .select('categories,free_text,created_at,updated_at')
+          .eq('user_id', currentUser.id)
+          .order('updated_at', ascending: false)
+          .limit(1);
+
+      final list = rows as List<dynamic>;
+      if (list.isEmpty) {
+        return const ReadingPreferences(categories: [], freeText: '');
+      }
+
+      final m = Map<String, dynamic>.from(list.first as Map);
+      final rawCategories = m['categories'];
+      final categories = <String>[];
+      if (rawCategories is List) {
+        for (final item in rawCategories) {
+          final value = (item ?? '').toString().trim();
+          if (value.isNotEmpty) categories.add(value);
+        }
+      }
+
+      final freeText = (m['free_text'] ?? '').toString();
+      return ReadingPreferences(
+        categories: categories,
+        freeText: freeText,
+        createdAt: UserProfile._parseDate(m['created_at']),
+        updatedAt: UserProfile._parseDate(m['updated_at']),
+      );
+    } on PostgrestException catch (e) {
+      throw Exception('No se pudieron cargar tus gustos: ${e.message}');
+    } catch (e) {
+      throw Exception('Error al cargar tus gustos: $e');
+    }
+  }
+
+  Future<void> saveMyReadingPreferences({
+    required List<String> categories,
+    required String freeText,
+  }) async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('No hay sesión activa.');
+    }
+
+    final cleanCategories = categories
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    cleanCategories.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final cleanFreeText = freeText.trim();
+    final now = DateTime.now().toUtc().toIso8601String();
+
+    try {
+      final updated = await _client
+          .from('reading_preferences')
+          .update({
+            'categories': cleanCategories,
+            'free_text': cleanFreeText.isEmpty ? null : cleanFreeText,
+            'updated_at': now,
+          })
+          .eq('user_id', currentUser.id)
+          .select('id')
+          .limit(1);
+
+      final updatedRows = updated as List<dynamic>;
+      if (updatedRows.isNotEmpty) return;
+
+      await _client.from('reading_preferences').insert({
+        'user_id': currentUser.id,
+        'categories': cleanCategories,
+        'free_text': cleanFreeText.isEmpty ? null : cleanFreeText,
+        'created_at': now,
+        'updated_at': now,
+      });
+    } on PostgrestException catch (e) {
+      throw Exception('No se pudieron guardar tus gustos: ${e.message}');
+    } catch (e) {
+      throw Exception('Error al guardar tus gustos: $e');
+    }
+  }
+
+  Future<RatingSummary> getUserRatingSummary(String userId) async {
+    final uid = userId.trim();
+    if (uid.isEmpty) return const RatingSummary(average: null, count: 0);
+    try {
+      final rows = await _client.from('reviews').select('rating').eq(
+        'reviewed_id',
+        uid,
+      );
+      final values = <double>[];
+      for (final row in rows as List<dynamic>) {
+        final m = Map<String, dynamic>.from(row as Map);
+        final raw = m['rating'];
+        if (raw is num) {
+          values.add(raw.toDouble());
+        } else {
+          final parsed = double.tryParse('$raw');
+          if (parsed != null) values.add(parsed);
+        }
+      }
+      if (values.isEmpty) return const RatingSummary(average: null, count: 0);
+      final sum = values.reduce((a, b) => a + b);
+      return RatingSummary(average: sum / values.length, count: values.length);
+    } on PostgrestException catch (e) {
+      throw Exception('No se pudo cargar la calificación: ${e.message}');
+    } catch (e) {
+      throw Exception('Error al cargar la calificación: $e');
+    }
+  }
+
+  Future<RatingSummary> getMyRatingSummary() async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('No hay sesión activa.');
+    }
+    return getUserRatingSummary(currentUser.id);
   }
 }

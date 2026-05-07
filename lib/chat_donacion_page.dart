@@ -1,27 +1,39 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Abre el chat de coordinación de una donación (desde solicitudes del panel, etc.).
 void abrirChatDonacion(
   BuildContext context, {
-  required String otroUsuario,
+  required int requestId,
+  required String otroUsuarioId,
   required String tituloLibro,
+  String? otroUsuarioNombre,
 }) {
   Navigator.of(context).push<void>(
     MaterialPageRoute<void>(
-      builder: (_) => ChatDonacionPage(otroUsuario: otroUsuario, tituloLibro: tituloLibro),
+      builder: (_) => ChatDonacionPage(
+        requestId: requestId,
+        otroUsuarioId: otroUsuarioId,
+        otroUsuarioNombre: otroUsuarioNombre,
+        tituloLibro: tituloLibro,
+      ),
     ),
   );
 }
 
-/// Pantalla de mensajes con un usuario sobre un libro concreto (mock local hasta backend).
+/// Pantalla de mensajes con persistencia en `messages`.
 class ChatDonacionPage extends StatefulWidget {
   const ChatDonacionPage({
     super.key,
-    required this.otroUsuario,
+    required this.requestId,
+    required this.otroUsuarioId,
+    this.otroUsuarioNombre,
     required this.tituloLibro,
   });
 
-  final String otroUsuario;
+  final int requestId;
+  final String otroUsuarioId;
+  final String? otroUsuarioNombre;
   final String tituloLibro;
 
   @override
@@ -29,33 +41,144 @@ class ChatDonacionPage extends StatefulWidget {
 }
 
 class _ChatMensaje {
-  _ChatMensaje({required this.texto, required this.esMio});
+  _ChatMensaje({
+    required this.texto,
+    required this.esMio,
+    required this.createdAt,
+  });
   final String texto;
   final bool esMio;
+  final DateTime? createdAt;
 }
 
 class _ChatDonacionPageState extends State<ChatDonacionPage> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
-  final List<_ChatMensaje> _mensajes = [];
+  RealtimeChannel? _channel;
+  List<_ChatMensaje> _mensajes = const [];
+  bool _loading = true;
+  bool _sending = false;
+  String? _error;
 
   static const Color _brandTitle = Color(0xFF1A533E);
   static const Color _sendGreen = Color(0xFF5D8F78);
+  SupabaseClient get _client => Supabase.instance.client;
+  String? get _myUserId => _client.auth.currentUser?.id;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMensajes();
+    _setupRealtime();
+  }
 
   @override
   void dispose() {
+    if (_channel != null) {
+      _client.removeChannel(_channel!);
+      _channel = null;
+    }
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _enviar() {
+  Future<void> _loadMensajes() async {
+    final myUserId = _myUserId;
+    if (myUserId == null) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Debes iniciar sesión para usar el chat.';
+      });
+      return;
+    }
+
+    try {
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _error = null;
+        });
+      }
+      final rows = await _client
+          .from('messages')
+          .select('sender_id,content,created_at')
+          .eq('request_id', widget.requestId)
+          .order('created_at', ascending: true);
+
+      final mensajes = (rows as List<dynamic>).map((row) {
+        final m = Map<String, dynamic>.from(row as Map);
+        return _ChatMensaje(
+          texto: (m['content'] ?? '').toString().trim(),
+          esMio: (m['sender_id'] ?? '').toString().trim() == myUserId,
+          createdAt:
+              DateTime.tryParse((m['created_at'] ?? '').toString())?.toLocal(),
+        );
+      }).where((m) => m.texto.isNotEmpty).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _mensajes = mensajes;
+        _loading = false;
+      });
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  void _setupRealtime() {
+    final channel = _client.channel('messages_request_${widget.requestId}');
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'request_id',
+            value: widget.requestId.toString(),
+          ),
+          callback: (_) {
+            _loadMensajes();
+          },
+        )
+        .subscribe();
+    _channel = channel;
+  }
+
+  Future<void> _enviar() async {
     final t = _controller.text.trim();
-    if (t.isEmpty) return;
-    setState(() {
-      _mensajes.add(_ChatMensaje(texto: t, esMio: true));
-      _controller.clear();
-    });
+    final myUserId = _myUserId;
+    if (t.isEmpty || _sending || myUserId == null) return;
+    setState(() => _sending = true);
+    try {
+      await _client.from('messages').insert({
+        'request_id': widget.requestId,
+        'sender_id': myUserId,
+        'recipient_id': widget.otroUsuarioId,
+        'content': t,
+      });
+      if (!mounted) return;
+      setState(() => _controller.clear());
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
     _focusNode.requestFocus();
   }
 
@@ -79,7 +202,7 @@ class _ChatDonacionPageState extends State<ChatDonacionPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Chat con ${widget.otroUsuario}',
+              'Chat con ${widget.otroUsuarioNombre ?? widget.otroUsuarioId}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -127,7 +250,13 @@ class _ChatDonacionPageState extends State<ChatDonacionPage> {
                     ),
                   ],
                 ),
-                child: _mensajes.isEmpty ? _emptyState() : _listaMensajes(context),
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                    ? _errorState()
+                    : _mensajes.isEmpty
+                    ? _emptyState()
+                    : _listaMensajes(context),
               ),
             ),
           ),
@@ -179,6 +308,25 @@ class _ChatDonacionPageState extends State<ChatDonacionPage> {
     );
   }
 
+  Widget _errorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _error ?? 'No se pudo cargar el chat.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            TextButton(onPressed: _loadMensajes, child: const Text('Reintentar')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _listaMensajes(BuildContext context) {
     final maxW = MediaQuery.sizeOf(context).width * 0.78;
     return ListView.builder(
@@ -196,7 +344,25 @@ class _ChatDonacionPageState extends State<ChatDonacionPage> {
               color: m.esMio ? const Color(0xFFE8F5E9) : const Color(0xFFF3F3F3),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Text(m.texto, style: const TextStyle(fontSize: 15, height: 1.35)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  m.texto,
+                  style: const TextStyle(fontSize: 15, height: 1.35),
+                ),
+                if (m.createdAt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${m.createdAt!.hour.toString().padLeft(2, '0')}:${m.createdAt!.minute.toString().padLeft(2, '0')}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.black.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       },
@@ -247,10 +413,23 @@ class _ChatDonacionPageState extends State<ChatDonacionPage> {
                 shape: const CircleBorder(),
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
-                  onTap: _enviar,
-                  child: const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                  onTap: _sending ? null : _enviar,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: _sending
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.send_rounded,
+                            color: Colors.white,
+                            size: 22,
+                          ),
                   ),
                 ),
               ),

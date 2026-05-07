@@ -23,9 +23,18 @@ class LibroSolidarioApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = ColorScheme.fromSeed(seedColor: const Color(0xFF1F8F5F));
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LibroSolidario',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: colorScheme,
+        scaffoldBackgroundColor: const Color(0xFFF7F7F7),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+        ),
+      ),
       home: const AuthGate(),
     );
   }

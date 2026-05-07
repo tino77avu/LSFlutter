@@ -165,44 +165,57 @@ class _ImpactoPageState extends State<ImpactoPage> {
         const SizedBox(height: 22),
         LayoutBuilder(
           builder: (context, c) {
-            final narrow = c.maxWidth < 560;
-            final stats = [
-              _SocialStat(
-                icon: Icons.menu_book_outlined,
-                value: '${data.totalPublished}',
-                label: 'Libros publicados',
-                bgColor: const Color(0xFF1F5D44),
-              ),
+            final narrow = c.maxWidth < 760;
+            final secondaryStats = [
               _SocialStat(
                 icon: Icons.card_giftcard_outlined,
-                value: '${data.totalDonated}',
+                value: data.totalDonated,
                 label: 'Donaciones completas',
-                bgColor: const Color(0xFF2E7D32),
+                bgColor: const Color(0xFFE8F5E9),
+                iconColor: const Color(0xFF2E7D32),
+                valueColor: const Color(0xFF1B5E20),
+                labelColor: const Color(0xFF3E4A3F),
               ),
               _SocialStat(
-                icon: Icons.favorite_border,
-                value: '${data.totalConnections}',
+                icon: Icons.handshake_outlined,
+                value: data.totalConnections,
                 label: 'Conexiones hechas',
-                bgColor: const Color(0xFF2C6B5A),
+                bgColor: const Color(0xFFF3F4F6),
+                iconColor: const Color(0xFF4B5563),
+                valueColor: const Color(0xFF1F2937),
+                labelColor: const Color(0xFF4B5563),
               ),
               _SocialStat(
                 icon: Icons.people_outline,
-                value: '${data.totalAvailable}',
+                value: data.totalAvailable,
                 label: 'Disponibles ahora',
-                bgColor: const Color(0xFF3A7F6A),
+                bgColor: const Color(0xFFEEF2F3),
+                iconColor: const Color(0xFF5F6B71),
+                valueColor: const Color(0xFF263238),
+                labelColor: const Color(0xFF5F6B71),
               ),
             ];
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: stats.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: narrow ? 2 : 4,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 1.0,
-              ),
-              itemBuilder: (context, i) => stats[i],
+            return Column(
+              children: [
+                _PrimarySocialStat(
+                  icon: Icons.menu_book_outlined,
+                  value: data.totalPublished,
+                  label: 'Libros publicados',
+                ),
+                const SizedBox(height: 12),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: secondaryStats.length,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: narrow ? 1 : 3,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: narrow ? 2.5 : 1.15,
+                  ),
+                  itemBuilder: (context, i) => secondaryStats[i],
+                ),
+              ],
             );
           },
         ),
@@ -273,30 +286,31 @@ class _ImpactoPageState extends State<ImpactoPage> {
                   _ImpactMetricTile(
                     iconBackground: const Color(0xFFE8F5E9),
                     iconBorder: const Color(0xFFC8E6C9),
-                    iconChild: const Text('🎁', style: TextStyle(fontSize: 26)),
-                    value: '${data.myDonated}',
+                    icon: Icons.card_giftcard_outlined,
+                    value: data.myDonated,
                     label: 'Libros donados',
                   ),
                   _ImpactMetricTile(
                     iconBackground: const Color(0xFFE8F5EC),
                     iconBorder: const Color(0xFFB2DFDB),
-                    iconChild: const Text('📚', style: TextStyle(fontSize: 26)),
-                    value: '${data.myReceived}',
+                    icon: Icons.import_contacts_outlined,
+                    value: data.myReceived,
                     label: 'Libros recibidos',
                   ),
                   _ImpactMetricTile(
                     iconBackground: const Color(0xFFFFF9E6),
                     iconBorder: const Color(0xFFFFE082),
-                    iconChild: const Text('✨', style: TextStyle(fontSize: 24)),
-                    value: '${data.myImpactedLives}',
+                    icon: Icons.auto_awesome_outlined,
+                    value: data.myImpactedLives,
                     label: 'Total de vidas tocadas',
                   ),
                   _ImpactMetricTile(
-                    iconBackground: const Color(0xFFE8F5E9),
-                    iconBorder: const Color(0xFFC8E6C9),
-                    iconChild: const Text('💬', style: TextStyle(fontSize: 24)),
-                    value: '—',
-                    valueIsPlaceholder: true,
+                    iconBackground: const Color(0xFFF3F4F6),
+                    iconBorder: const Color(0xFFE0E0E0),
+                    icon: Icons.forum_outlined,
+                    value: 0,
+                    customValue: _impactWords(data),
+                    valueIsPlaceholder: _impactWords(data) == _impactWordsEmpty,
                     label: 'Impacto en palabras',
                   ),
                 ];
@@ -331,9 +345,9 @@ class _ImpactoPageState extends State<ImpactoPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Tu impacto sigue creciendo',
-                          style: TextStyle(
+                        Text(
+                          _impactHeadline(data),
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
                             color: Color(0xFF1B5E20),
@@ -341,7 +355,7 @@ class _ImpactoPageState extends State<ImpactoPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Has donado ${data.myDonated} libro(s) y generado ${data.myImpactedLives} oportunidad(es) de acceso al conocimiento.',
+                          _impactMessage(data),
                           style: TextStyle(
                             fontSize: 13,
                             height: 1.45,
@@ -382,10 +396,34 @@ class _ImpactoPageState extends State<ImpactoPage> {
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFE0E0E0)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x12000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
             ),
-            child: Text(
-              'Aún no tienes libros donados.',
-              style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Aún no tienes libros donados.',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Tu primera donación puede abrir una nueva historia de aprendizaje.',
+                  style: TextStyle(color: Colors.black.withValues(alpha: 0.55)),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () => abrirCompartirLibro(context),
+                  style: FilledButton.styleFrom(backgroundColor: _brand),
+                  icon: const Icon(Icons.card_giftcard_outlined),
+                  label: const Text('Donar mi primer libro'),
+                ),
+              ],
             ),
           )
         else
@@ -740,6 +778,27 @@ class _ImpactoPageState extends State<ImpactoPage> {
     return '${months[date.month - 1]} ${date.year}';
   }
 
+  static const String _impactWordsEmpty = 'Tu historia de impacto comienza hoy.';
+
+  String _impactWords(ImpactData data) {
+    if (data.myImpactedLives <= 0) return _impactWordsEmpty;
+    if (data.myImpactedLives == 1) return 'Ya inspiraste a 1 persona.';
+    return 'Ya inspiraste a ${data.myImpactedLives} personas.';
+  }
+
+  String _impactHeadline(ImpactData data) {
+    if (data.myDonated <= 0) return 'Tu impacto empieza con un libro';
+    if (data.myDonated < 3) return 'Tu impacto sigue creciendo';
+    return 'Estas dejando una huella real';
+  }
+
+  String _impactMessage(ImpactData data) {
+    if (data.myDonated <= 0) {
+      return 'Aun no registras donaciones. Publica tu primer libro y empieza a transformar historias.';
+    }
+    return 'Has donado ${data.myDonated} libro(s) y generado ${data.myImpactedLives} oportunidad(es) de acceso al conocimiento.';
+  }
+
   IconData _iconForCategory(String category) {
     final c = category.toLowerCase().trim();
     if (c.contains('infantil')) return Icons.toys_outlined;
@@ -803,12 +862,18 @@ class _SocialStat extends StatelessWidget {
     required this.value,
     required this.label,
     required this.bgColor,
+    required this.iconColor,
+    required this.valueColor,
+    required this.labelColor,
   });
 
   final IconData icon;
-  final String value;
+  final int value;
   final String label;
   final Color bgColor;
+  final Color iconColor;
+  final Color valueColor;
+  final Color labelColor;
 
   @override
   Widget build(BuildContext context) {
@@ -816,20 +881,27 @@ class _SocialStat extends StatelessWidget {
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: Colors.white.withValues(alpha: 0.9), size: 24),
+          Icon(icon, color: iconColor, size: 22),
           const SizedBox(height: 10),
-          Text(
+          _AnimatedCounter(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'Georgia',
-              fontSize: 32,
+              fontSize: 28,
               fontWeight: FontWeight.w700,
-              color: Colors.white,
+              color: valueColor,
             ),
           ),
           const SizedBox(height: 4),
@@ -838,8 +910,78 @@ class _SocialStat extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.85),
+              color: labelColor,
               height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrimarySocialStat extends StatelessWidget {
+  const _PrimarySocialStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final int value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F5D44),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x22000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: Colors.white, size: 30),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AnimatedCounter(
+                  value,
+                  style: const TextStyle(
+                    fontFamily: 'Georgia',
+                    fontSize: 42,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    height: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.white.withValues(alpha: 0.92),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1007,17 +1149,19 @@ class _ImpactMetricTile extends StatelessWidget {
   const _ImpactMetricTile({
     required this.iconBackground,
     required this.iconBorder,
-    required this.iconChild,
+    required this.icon,
     required this.value,
     required this.label,
+    this.customValue,
     this.valueIsPlaceholder = false,
   });
 
   final Color iconBackground;
   final Color iconBorder;
-  final Widget iconChild;
-  final String value;
+  final IconData icon;
+  final int value;
   final String label;
+  final String? customValue;
   final bool valueIsPlaceholder;
 
   static const Color _border = Color(0xFFE0E0E0);
@@ -1029,6 +1173,13 @@ class _ImpactMetricTile extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       child: Column(
@@ -1043,22 +1194,38 @@ class _ImpactMetricTile extends StatelessWidget {
               border: Border.all(color: iconBorder, width: 1.5),
             ),
             alignment: Alignment.center,
-            child: iconChild,
+            child: Icon(icon, size: 24, color: const Color(0xFF2E7D32)),
           ),
           const SizedBox(height: 8),
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: 'Georgia',
-              fontSize: valueIsPlaceholder ? 22 : 26,
-              fontWeight: FontWeight.w800,
-              height: 1.1,
-              color: valueIsPlaceholder
-                  ? Colors.black.withValues(alpha: 0.35)
-                  : const Color(0xFF1B5E20),
+          if (customValue == null)
+            _AnimatedCounter(
+              value,
+              style: TextStyle(
+                fontFamily: 'Georgia',
+                fontSize: valueIsPlaceholder ? 22 : 26,
+                fontWeight: FontWeight.w800,
+                height: 1.1,
+                color: valueIsPlaceholder
+                    ? Colors.black.withValues(alpha: 0.35)
+                    : const Color(0xFF1B5E20),
+              ),
+            )
+          else
+            Text(
+              customValue!,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Georgia',
+                fontSize: valueIsPlaceholder ? 16 : 18,
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+                color: valueIsPlaceholder
+                    ? Colors.black.withValues(alpha: 0.5)
+                    : const Color(0xFF1B5E20),
+              ),
             ),
-          ),
           const SizedBox(height: 4),
           Text(
             label,
@@ -1072,6 +1239,27 @@ class _ImpactMetricTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AnimatedCounter extends StatelessWidget {
+  const _AnimatedCounter(this.value, {required this.style});
+
+  final int value;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: value.toDouble()),
+      duration: const Duration(milliseconds: 850),
+      curve: Curves.easeOutCubic,
+      builder: (context, animated, _) => Text(
+        animated.toInt().toString(),
+        textAlign: TextAlign.center,
+        style: style,
       ),
     );
   }
